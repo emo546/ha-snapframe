@@ -1,0 +1,64 @@
+name: "SnapFrame – HEIC Photo Slideshow for Home Assistant"
+version: "2.8.0"
+slug: "snapframe"
+description: "Turn any old tablet or iPad into a smart digital photo frame. Watches an SMB share, converts HEIC/HEIF to JPG, and serves a fullscreen slideshow with albums, EXIF date/GPS overlay, swipe gestures, web upload, night mode and a motion-triggered weather screen."
+url: "https://github.com/emo546/ha-snapframe"
+arch:
+  - aarch64
+  - amd64
+init: false
+map:
+  - type: addon_config
+    read_only: false
+options:
+  smb_server: "192.168.1.100"
+  smb_share: "Photos"
+  smb_username: ""
+  smb_password: ""
+  watch_folder: "/sambamount/upload"
+  output_folder: "/sambamount/converted"
+  delete_original: true
+  jpg_quality: 92
+  thumb_quality: 82
+  thumb_max_px: 1024
+  scan_interval_hours: 12
+  slideshow_seconds: 30
+  web_port: 8099
+  basic_auth_user: ""
+  basic_auth_password: ""
+  language: "sk"
+  sleep_start: ""
+  sleep_end: ""
+  weather_photo_interval: 8
+  weather_mode_duration_minutes: 120
+schema:
+  smb_server: str
+  smb_share: str
+  smb_username: str
+  smb_password: password
+  watch_folder: str
+  output_folder: str
+  delete_original: bool
+  jpg_quality: int(1,100)
+  thumb_quality: int(1,100)
+  thumb_max_px: int(256,3840)
+  scan_interval_hours: int(1,168)
+  slideshow_seconds: int(3,300)
+  web_port: port
+  basic_auth_user: str
+  basic_auth_password: password
+  language: str
+  sleep_start: str
+  sleep_end: str
+  weather_photo_interval: int(2,50)
+  weather_mode_duration_minutes: int(5,720)
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: "SnapFrame slideshow web interface"
+devices: []
+full_access: true
+apparmor: false
+privileged:
+  - SYS_ADMIN
+  - DAC_READ_SEARCH
