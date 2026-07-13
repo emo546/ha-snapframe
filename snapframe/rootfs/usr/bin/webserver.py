@@ -978,6 +978,53 @@ html, body {
   font-size: clamp(13px, 1.4vw, 20px); letter-spacing: 0.22em; text-transform: uppercase;
   color: rgba(255,255,255,0.32);
 }
+/* — Portrét (tablet/telefón na výšku): hero na stred, hodiny ako riadky zhora dole — */
+@media (orientation: portrait) {
+  #weather-slide {
+    -webkit-justify-content: center; justify-content: center;
+    padding: 3vh 5vw;
+  }
+  .weather-hero {
+    -webkit-flex-direction: column; flex-direction: column;
+    gap: clamp(2px, 0.6vh, 8px);
+  }
+  .weather-main { text-align: center; }
+  .weather-temp { font-size: clamp(80px, 21vw, 190px); }
+  .weather-icon { font-size: clamp(74px, 17vw, 150px); }
+  .weather-cond { font-size: clamp(21px, 4.6vw, 36px); margin-top: clamp(2px, 0.5vh, 8px); }
+  .weather-range {
+    margin-top: clamp(10px, 1.8vh, 26px);
+    font-size: clamp(15px, 3.3vw, 24px); gap: clamp(26px, 8vw, 56px);
+  }
+  .weather-range .val { font-size: clamp(19px, 4.2vw, 28px); }
+  .weather-hourly {
+    -webkit-flex-direction: column; flex-direction: column;
+    width: min(92%, 620px); gap: clamp(7px, 1vh, 13px);
+    margin-top: clamp(14px, 2.6vh, 36px);
+  }
+  .weather-hour {
+    -webkit-flex-direction: row; flex-direction: row;
+    -webkit-justify-content: space-between; justify-content: space-between;
+    max-width: none; width: 100%;
+    padding: clamp(8px, 1.3vh, 18px) clamp(20px, 6vw, 40px);
+  }
+  .weather-hour .wh-time {
+    -webkit-flex: 0 0 auto; flex: 0 0 auto; min-width: 3.4em; text-align: left;
+    font-size: clamp(21px, 5.4vw, 34px);
+  }
+  .weather-hour .wh-ico {
+    margin: 0; -webkit-flex: 0 0 auto; flex: 0 0 auto;
+    font-size: clamp(32px, 7.6vw, 52px);
+  }
+  .weather-hour .wh-temp {
+    -webkit-flex: 0 0 auto; flex: 0 0 auto; min-width: 2.6em; text-align: right;
+    font-size: clamp(26px, 6.6vw, 44px);
+  }
+  /* dátum do toku, nech neprekrýva riadky na vysokom obsahu */
+  .weather-date {
+    position: static; margin-top: clamp(16px, 3vh, 34px); bottom: auto;
+  }
+}
 /* ===== SETTINGS ===== */
 .settings-btn {
   position: absolute; top: 18px; right: 18px; z-index: 60;
@@ -1636,6 +1683,15 @@ function fetchWeatherStatus() {
 }
 setInterval(fetchWeatherStatus, 60000);
 
+// Po otočení obrazovky (portrét <-> landscape) prekresli weather slide,
+// aby sa počet a rozloženie hodinových kariet prispôsobili orientácii.
+function _weatherIsVisible() {
+  return document.getElementById("weather-slide").className.indexOf("visible") !== -1;
+}
+window.addEventListener("resize", function() {
+  if (_weatherIsVisible() && weatherData) { showWeatherSlide(); }
+});
+
 function showWeatherSlide() {
   var d = weatherData;
   if (!d) { return; }
@@ -1662,14 +1718,17 @@ function renderHourly(hourly) {
   var host = document.getElementById("weather-hourly");
   if (!hourly || !hourly.length) { host.innerHTML = ""; host.style.display = "none"; return; }
   host.style.display = "";
-  // Zobraz max 6 veľkých kariet – čitateľnejšie zďaleka než 12 malých.
-  // Ak máme viac hodín, rovnomerne navzorkuj naprieč celým rozsahom (napr. každú druhú hodinu).
-  var maxCols = 6;
+  // Portrét (na výšku): hodiny sú riadky zhora dole. Landscape (na stene):
+  // 6 veľkých kariet vedľa seba. 6 položiek sa zmestí aj na telefón na výšku
+  // a ostáva všade veľké a čitateľné zďaleka. Rozloženie rieši CSS podľa orientácie.
+  var maxItems = 6;
   var list = hourly;
-  if (list.length > maxCols) {
-    var step = Math.ceil(list.length / maxCols);
+  if (list.length > maxItems) {
+    // Rovnomerne navzorkuj naprieč celým rozsahom vrátane prvej a poslednej hodiny.
     var sampled = [];
-    for (var i = 0; i < list.length && sampled.length < maxCols; i += step) { sampled.push(list[i]); }
+    for (var k = 0; k < maxItems; k++) {
+      sampled.push(list[Math.round(k * (list.length - 1) / (maxItems - 1))]);
+    }
     list = sampled;
   }
   var html = "";
