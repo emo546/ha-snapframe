@@ -954,6 +954,7 @@ html, body {
   display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column;
   -webkit-align-items: center; align-items: center; -webkit-flex: 1 1 0; flex: 1 1 0;
   min-width: 0; max-width: 220px;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
   padding: clamp(14px, 1.8vh, 26px) clamp(4px, 1vw, 16px) clamp(13px, 1.7vh, 24px);
   border-radius: clamp(16px, 1.8vw, 26px);
   background: rgba(255,255,255,0.055); border: 1px solid rgba(255,255,255,0.07);
