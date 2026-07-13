@@ -1000,14 +1000,14 @@ html, body {
   .weather-range .val { font-size: clamp(19px, 4.2vw, 28px); }
   .weather-hourly {
     -webkit-flex-direction: column; flex-direction: column;
-    width: min(92%, 620px); gap: clamp(7px, 1vh, 13px);
+    width: min(92%, 360px); gap: clamp(7px, 1vh, 13px);
     margin-top: clamp(14px, 2.6vh, 36px);
   }
   .weather-hour {
     -webkit-flex-direction: row; flex-direction: row;
     -webkit-justify-content: space-between; justify-content: space-between;
     max-width: none; width: 100%;
-    padding: clamp(8px, 1.3vh, 18px) clamp(20px, 6vw, 40px);
+    padding: clamp(8px, 1.3vh, 18px) clamp(16px, 5vw, 24px);
   }
   .weather-hour .wh-time {
     -webkit-flex: 0 0 auto; flex: 0 0 auto; min-width: 3.4em; text-align: left;
