@@ -232,15 +232,16 @@ rest_command:
     content_type: "application/json"
     payload: >
       {
-        "temperature": {{ state_attr('weather.home', 'temperature') }},
+        "temperature": {{ state_attr('weather.home', 'temperature') if state_attr('weather.home', 'temperature') is not none else 'null' }},
         "condition": "{{ states('weather.home') }}",
-        "forecast_high": {{ state_attr('weather.home', 'forecast')[0].temperature if state_attr('weather.home', 'forecast') else 'null' }},
-        "forecast_low": {{ state_attr('weather.home', 'forecast')[0].templow if state_attr('weather.home', 'forecast') else 'null' }},
-        "humidity": {{ state_attr('weather.home', 'humidity') or 'null' }}
+        "humidity": {{ state_attr('weather.home', 'humidity') if state_attr('weather.home', 'humidity') is not none else 'null' }},
+        "hourly": {{ hourly | default([], true) | tojson }}
       }
 ```
 
 Replace `weather.home` with your own weather entity (any weather integration works — Met.no, OpenWeatherMap, AccuWeather, etc.).
+
+The current temperature, condition and humidity are read straight from the weather entity's state. The `hourly` field (next ~12 hours) is passed in as a variable from the automation below — SnapFrame renders a small hourly-forecast strip from it and auto-derives today's high/low from those hours (so you don't need to send `forecast_high`/`forecast_low` separately, though you still can if you prefer).
 
 ### 2. Automation: turn weather mode on when motion is detected in the morning
 
@@ -261,6 +262,8 @@ automation:
 
 ### 3. Automation: keep the weather data fresh
 
+This automation fetches the hourly forecast via `weather.get_forecasts` and passes both the current data and the next 12 hours to SnapFrame:
+
 ```yaml
 automation:
   - alias: "SnapFrame – push weather update"
@@ -268,8 +271,18 @@ automation:
       - platform: time_pattern
         minutes: "/30"
     action:
+      - service: weather.get_forecasts
+        target:
+          entity_id: weather.home
+        data:
+          type: hourly
+        response_variable: fc
       - service: rest_command.snapframe_weather_update
+        data:
+          hourly: "{{ fc['weather.home'].forecast[:12] }}"
 ```
+
+> **Why the extra `weather.get_forecasts` step?** Recent Home Assistant versions removed the `forecast` attribute from the weather entity's state — the forecast now has to be fetched explicitly via the `weather.get_forecasts` action, which returns it into `response_variable`. We take the first 12 hourly entries and hand them to SnapFrame. If your weather integration only offers a daily forecast, use `type: daily` instead (the strip will then show upcoming days rather than hours).
 
 That's it — no token, no `homeassistant_api` permission, no entity IDs hard-coded into the add-on. You can freely change which motion sensor or weather entity triggers it, or add your own conditions (e.g. only on weekdays), entirely from Home Assistant's automation editor.
 
@@ -324,11 +337,18 @@ To turn weather mode off early (e.g. from another automation, or a script tied t
   "condition": "partlycloudy",
   "forecast_high": 24,
   "forecast_low": 14,
-  "humidity": 55
+  "humidity": 55,
+  "hourly": [
+    { "datetime": "2026-07-13T14:00:00+00:00", "temperature": 21, "condition": "sunny" },
+    { "datetime": "2026-07-13T15:00:00+00:00", "temperature": 23, "condition": "partlycloudy" }
+  ]
 }
 ```
 
-`condition` should be one of the standard [Home Assistant weather conditions](https://www.home-assistant.io/integrations/weather/) (`sunny`, `cloudy`, `rainy`, `snowy`, `partlycloudy`, …) so it maps to a matching icon and translated label in the UI. Unknown conditions fall back to a generic icon.
+`condition` (and each `hourly[].condition`) should be one of the standard [Home Assistant weather conditions](https://www.home-assistant.io/integrations/weather/) (`sunny`, `cloudy`, `rainy`, `snowy`, `partlycloudy`, …) so it maps to a matching icon and translated label in the UI. Unknown conditions fall back to a generic icon.
+
+- All fields are optional. If `hourly` is present (up to 12 entries are used), SnapFrame renders an hourly-forecast strip (time · icon · temperature) below the current conditions, and — when `forecast_high`/`forecast_low` are omitted — derives today's high/low from those hourly temperatures.
+- `hourly[].datetime` accepts any ISO-8601 timestamp (the format Home Assistant's `weather.get_forecasts` returns); only the `HH:MM` part is shown. On narrow screens the strip samples every 2nd hour to stay readable.
 
 ---
 

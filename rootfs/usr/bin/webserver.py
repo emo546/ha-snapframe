@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-SnapFrame – webový server v2.8
+SnapFrame – webový server v2.9
 Novinky v2.6: multi-language (SK/EN/DE), sleep schedule (čierna obrazovka v noci)
 Novinky v2.7: nastavenia v appke – voliteľná hviezdna obloha (namiesto čiernej) počas sleep režimu
 Novinky v2.8: weather mode – pohybovým senzorom (cez HA automatizáciu) spúšťaná obrazovka
               s aktuálnym počasím a predpoveďou, vkladaná periodicky medzi fotky
+Novinky v2.9: weather mode – hodinová predpoveď na najbližších ~12 h (pás s časom,
+              ikonou a teplotou); min/max sa dopočíta z hodinovej predpovede
 """
 
 import os
@@ -629,19 +631,60 @@ def status_route():
 
 # ── Weather mode (spúšťané pohybovým senzorom cez HA automatizáciu) ───────────
 
+def _hour_label(dt_str: str) -> str:
+    """Z ISO datetime (napr. '2026-07-13T14:00:00+00:00') urobí 'HH:MM'."""
+    s = str(dt_str or "")
+    try:
+        clean = s.replace("Z", "+00:00")
+        return datetime.fromisoformat(clean).strftime("%H:%M")
+    except (ValueError, TypeError):
+        # Fallback: skús vyseknúť hodinu z reťazca "....THH:MM..."
+        if "T" in s and len(s) >= 16:
+            return s[11:16]
+        return ""
+
+def _parse_hourly(raw_list, max_items=12):
+    """Spracuj zoznam hodinových predpovedí z HA weather.get_forecasts."""
+    if not isinstance(raw_list, (list, tuple)):
+        return []
+    out = []
+    for item in raw_list[:max_items]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            temp = round(float(item.get("temperature")), 1)
+        except (TypeError, ValueError):
+            temp = None
+        out.append({
+            "time":      _hour_label(item.get("datetime")),
+            "temperature": temp,
+            "condition": str(item.get("condition") or "")[:40],
+        })
+    return out
+
 def _parse_weather_payload(raw: dict) -> dict:
     def _num(key):
         try:
             return round(float(raw.get(key)), 1)
         except (TypeError, ValueError):
             return None
+    hourly = _parse_hourly(raw.get("hourly"))
+    forecast_high = _num("forecast_high")
+    forecast_low  = _num("forecast_low")
+    # Ak min/max nie sú v payloade, dopočítaj ich z hodinovej predpovede na najbližších 12 h
+    hourly_temps = [h["temperature"] for h in hourly if h["temperature"] is not None]
+    if forecast_high is None and hourly_temps:
+        forecast_high = round(max(hourly_temps), 1)
+    if forecast_low is None and hourly_temps:
+        forecast_low = round(min(hourly_temps), 1)
     data = {
         "temperature":    _num("temperature"),
-        "forecast_high":  _num("forecast_high"),
-        "forecast_low":   _num("forecast_low"),
+        "forecast_high":  forecast_high,
+        "forecast_low":   forecast_low,
         "humidity":       _num("humidity"),
         "condition":      str(raw.get("condition") or "")[:40],
         "unit":           str(raw.get("unit") or "°C")[:8],
+        "hourly":         hourly,
     }
     return data
 
@@ -865,24 +908,40 @@ html, body {
 }
 #weather-slide.visible { display: -webkit-flex; display: flex; opacity: 1; }
 .weather-icon {
-  font-size: 108px; line-height: 1; margin-bottom: 4px;
+  font-size: 92px; line-height: 1; margin-bottom: 4px;
   filter: drop-shadow(0 6px 20px rgba(0,0,0,0.55));
   -webkit-filter: drop-shadow(0 6px 20px rgba(0,0,0,0.55));
 }
 .weather-temp {
-  font-size: 96px; font-weight: 200; letter-spacing: -2px;
+  font-size: 82px; font-weight: 200; letter-spacing: -2px;
   color: #fff; line-height: 1;
 }
 .weather-cond {
-  font-size: 21px; font-weight: 300; letter-spacing: 1px;
+  font-size: 20px; font-weight: 300; letter-spacing: 1px;
   color: rgba(255,255,255,0.62); margin-top: 10px;
 }
 .weather-range {
-  margin-top: 30px; display: -webkit-flex; display: flex; gap: 32px;
+  margin-top: 22px; display: -webkit-flex; display: flex; gap: 32px;
   font-size: 15px; letter-spacing: 1px; text-transform: uppercase;
   color: rgba(255,255,255,0.4);
 }
 .weather-range .val { color: #fff; font-size: 18px; text-transform: none; margin-left: 6px; letter-spacing: 0; }
+.weather-hourly {
+  margin-top: 34px; display: -webkit-flex; display: flex;
+  -webkit-flex-wrap: nowrap; flex-wrap: nowrap; gap: 4px;
+  max-width: 94%; overflow: hidden;
+}
+.weather-hour {
+  display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column;
+  align-items: center; -webkit-flex: 1 1 0; flex: 1 1 0; min-width: 0;
+  padding: 12px 4px 11px; border-radius: 12px;
+  background: rgba(255,255,255,0.05);
+}
+.weather-hour .wh-time {
+  font-size: 12px; letter-spacing: 0.5px; color: rgba(255,255,255,0.45);
+}
+.weather-hour .wh-ico  { font-size: 26px; line-height: 1; margin: 7px 0 6px; }
+.weather-hour .wh-temp { font-size: 17px; font-weight: 300; color: #fff; }
 .weather-date {
   position: absolute; bottom: 26px; left: 0; right: 0; text-align: center;
   font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
@@ -1108,6 +1167,7 @@ html, body {
     <div class="weather-temp" id="weather-temp"></div>
     <div class="weather-cond" id="weather-cond"></div>
     <div class="weather-range" id="weather-range"></div>
+    <div class="weather-hourly" id="weather-hourly"></div>
     <div class="weather-date" id="weather-date"></div>
   </div>
   <div id="ss-msg"></div>
@@ -1555,11 +1615,39 @@ function showWeatherSlide() {
     parts.push(escHtml(tr("weather_low")) + " <span class=\"val\">" + Math.round(d.forecast_low) + "°</span>");
   }
   document.getElementById("weather-range").innerHTML = parts.join("");
+  renderHourly(d.hourly);
   document.getElementById("weather-date").textContent = new Date().toLocaleDateString();
   document.getElementById("overlay-date").innerHTML     = "";
   document.getElementById("overlay-location").innerHTML = "";
   document.getElementById("photo-counter").innerHTML    = "";
   document.getElementById("weather-slide").className = "visible";
+}
+
+function renderHourly(hourly) {
+  var host = document.getElementById("weather-hourly");
+  if (!hourly || !hourly.length) { host.innerHTML = ""; host.style.display = "none"; return; }
+  host.style.display = "";
+  // Na úzkych obrazovkách zobraz max 6 stĺpcov (každú druhú hodinu), inak až 12
+  var maxCols = (window.innerWidth < 640) ? 6 : 12;
+  var list = hourly;
+  if (list.length > maxCols) {
+    var step = Math.ceil(list.length / maxCols);
+    var sampled = [];
+    for (var i = 0; i < list.length && sampled.length < maxCols; i += step) { sampled.push(list[i]); }
+    list = sampled;
+  }
+  var html = "";
+  for (var j = 0; j < list.length; j++) {
+    var h = list[j];
+    var ico  = WEATHER_EMOJI[h.condition] || "🌡️";
+    var temp = (h.temperature != null) ? Math.round(h.temperature) + "°" : "--";
+    html += "<div class=\"weather-hour\">"
+          + "<div class=\"wh-time\">" + escHtml(h.time || "") + "</div>"
+          + "<div class=\"wh-ico\">" + ico + "</div>"
+          + "<div class=\"wh-temp\">" + escHtml(temp) + "</div>"
+          + "</div>";
+  }
+  host.innerHTML = html;
 }
 
 function hideWeatherSlide() {

@@ -22,3 +22,6 @@ Thumbs.db
 # Build artifacts
 *.zip
 *.tar.gz
+
+# Claude Code local settings
+.claude/
