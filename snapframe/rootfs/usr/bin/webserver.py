@@ -911,72 +911,89 @@ html, body {
   opacity: 0; -webkit-transition: opacity 1s ease-in-out; transition: opacity 1s ease-in-out;
 }
 #weather-slide.visible { display: -webkit-flex; display: flex; opacity: 1; }
-/* — Hero: veľká ikona + obrovská teplota vedľa seba — */
+/* — Hero: veľká ikona + obrovská teplota vedľa seba —
+   Pozn.: pred každým clamp()/min() je px fallback pre staré Safari
+   (napr. iPad Safari 9–12), ktoré clamp()/min() nepodporujú a inak by
+   celý riadok zahodili → text spadne na default a rozbije sa layout. */
 .weather-hero {
   display: -webkit-flex; display: flex; -webkit-align-items: center; align-items: center;
   -webkit-justify-content: center; justify-content: center;
+  gap: 28px;
   gap: clamp(12px, 2.5vw, 40px);
 }
 .weather-icon {
+  font-size: 130px;
   font-size: clamp(78px, 12vw, 168px); line-height: 1;
   filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
   -webkit-filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
 }
 .weather-main { text-align: left; }
 .weather-temp {
+  font-size: 160px;
   font-size: clamp(92px, 16vw, 220px); font-weight: 200; letter-spacing: -0.03em;
   color: #fff; line-height: 0.9;
   text-shadow: 0 3px 30px rgba(0,0,0,0.5);
 }
 .weather-cond {
+  font-size: 30px;
   font-size: clamp(20px, 3vw, 44px); font-weight: 300; letter-spacing: 0.01em;
-  color: rgba(255,255,255,0.82); margin-top: clamp(4px, 0.8vw, 14px);
+  color: rgba(255,255,255,0.82);
+  margin-top: 10px; margin-top: clamp(4px, 0.8vw, 14px);
 }
 /* — Max/Min dnešného dňa — */
 .weather-range {
-  margin-top: clamp(18px, 3.2vh, 44px);
-  display: -webkit-flex; display: flex; gap: clamp(24px, 4vw, 64px);
-  font-size: clamp(15px, 1.7vw, 24px); letter-spacing: 0.12em; text-transform: uppercase;
+  margin-top: 30px; margin-top: clamp(18px, 3.2vh, 44px);
+  display: -webkit-flex; display: flex;
+  gap: 44px; gap: clamp(24px, 4vw, 64px);
+  font-size: 18px; font-size: clamp(15px, 1.7vw, 24px);
+  letter-spacing: 0.12em; text-transform: uppercase;
   color: rgba(255,255,255,0.5);
 }
 .weather-range .val {
-  color: #fff; font-size: clamp(19px, 2.2vw, 32px);
-  text-transform: none; margin-left: clamp(6px, 0.7vw, 12px); letter-spacing: 0;
+  color: #fff;
+  font-size: 24px; font-size: clamp(19px, 2.2vw, 32px);
+  text-transform: none;
+  margin-left: 8px; margin-left: clamp(6px, 0.7vw, 12px); letter-spacing: 0;
 }
 /* — Hodinová predpoveď: menej, ale veľkých kariet, čitateľných zďaleka — */
 .weather-hourly {
-  margin-top: clamp(26px, 4.5vh, 70px);
+  margin-top: 44px; margin-top: clamp(26px, 4.5vh, 70px);
   display: -webkit-flex; display: flex; -webkit-flex-wrap: nowrap; flex-wrap: nowrap;
-  gap: clamp(8px, 1.2vw, 20px);
+  gap: 14px; gap: clamp(8px, 1.2vw, 20px);
   width: 100%; max-width: 1500px; -webkit-justify-content: center; justify-content: center;
 }
 .weather-hour {
   display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column;
-  -webkit-align-items: center; align-items: center; -webkit-flex: 1 1 0; flex: 1 1 0;
+  -webkit-align-items: center; align-items: center; -webkit-flex: 1 1 0%; flex: 1 1 0%;
   min-width: 0; max-width: 220px;
   -webkit-box-sizing: border-box; box-sizing: border-box;
+  padding: 20px 10px 18px;
   padding: clamp(14px, 1.8vh, 26px) clamp(4px, 1vw, 16px) clamp(13px, 1.7vh, 24px);
-  border-radius: clamp(16px, 1.8vw, 26px);
+  border-radius: 18px; border-radius: clamp(16px, 1.8vw, 26px);
   background: rgba(255,255,255,0.055); border: 1px solid rgba(255,255,255,0.07);
 }
 .weather-hour.now {
   background: rgba(120,170,255,0.16); border-color: rgba(140,185,255,0.4);
 }
 .weather-hour .wh-time {
-  font-size: clamp(15px, 1.9vw, 27px); letter-spacing: 0.03em; font-weight: 300;
+  font-size: 19px; font-size: clamp(15px, 1.9vw, 27px);
+  letter-spacing: 0.03em; font-weight: 300;
   color: rgba(255,255,255,0.72);
 }
 .weather-hour.now .wh-time { color: #cfe0ff; }
 .weather-hour .wh-ico  {
-  font-size: clamp(34px, 4.6vw, 68px); line-height: 1;
-  margin: clamp(9px, 1.3vh, 18px) 0 clamp(8px, 1.1vh, 16px);
+  font-size: 44px; font-size: clamp(34px, 4.6vw, 68px); line-height: 1;
+  margin: 12px 0 10px; margin: clamp(9px, 1.3vh, 18px) 0 clamp(8px, 1.1vh, 16px);
 }
 .weather-hour .wh-temp {
-  font-size: clamp(23px, 3.2vw, 46px); font-weight: 400; color: #fff; line-height: 1;
+  font-size: 26px; font-size: clamp(23px, 3.2vw, 46px);
+  font-weight: 400; color: #fff; line-height: 1;
 }
 .weather-date {
-  position: absolute; bottom: clamp(20px, 3.5vh, 44px); left: 0; right: 0; text-align: center;
-  font-size: clamp(13px, 1.4vw, 20px); letter-spacing: 0.22em; text-transform: uppercase;
+  position: absolute; bottom: 28px; bottom: clamp(20px, 3.5vh, 44px);
+  left: 0; right: 0; text-align: center;
+  font-size: 15px; font-size: clamp(13px, 1.4vw, 20px);
+  letter-spacing: 0.22em; text-transform: uppercase;
   color: rgba(255,255,255,0.32);
 }
 /* — Portrét (tablet/telefón na výšku): hero na stred, hodiny ako riadky zhora dole — */
@@ -987,43 +1004,50 @@ html, body {
   }
   .weather-hero {
     -webkit-flex-direction: column; flex-direction: column;
-    gap: clamp(2px, 0.6vh, 8px);
+    gap: 6px; gap: clamp(2px, 0.6vh, 8px);
   }
   .weather-main { text-align: center; }
-  .weather-temp { font-size: clamp(80px, 21vw, 190px); }
-  .weather-icon { font-size: clamp(74px, 17vw, 150px); }
-  .weather-cond { font-size: clamp(21px, 4.6vw, 36px); margin-top: clamp(2px, 0.5vh, 8px); }
-  .weather-range {
-    margin-top: clamp(10px, 1.8vh, 26px);
-    font-size: clamp(15px, 3.3vw, 24px); gap: clamp(26px, 8vw, 56px);
+  .weather-temp { font-size: 150px; font-size: clamp(80px, 21vw, 190px); }
+  .weather-icon { font-size: 120px; font-size: clamp(74px, 17vw, 150px); }
+  .weather-cond {
+    font-size: 30px; font-size: clamp(21px, 4.6vw, 36px);
+    margin-top: 6px; margin-top: clamp(2px, 0.5vh, 8px);
   }
-  .weather-range .val { font-size: clamp(19px, 4.2vw, 28px); }
+  .weather-range {
+    margin-top: 20px; margin-top: clamp(10px, 1.8vh, 26px);
+    font-size: 20px; font-size: clamp(15px, 3.3vw, 24px);
+    gap: 40px; gap: clamp(26px, 8vw, 56px);
+  }
+  .weather-range .val { font-size: 24px; font-size: clamp(19px, 4.2vw, 28px); }
   .weather-hourly {
     -webkit-flex-direction: column; flex-direction: column;
-    width: min(92%, 360px); gap: clamp(7px, 1vh, 13px);
-    margin-top: clamp(14px, 2.6vh, 36px);
+    width: 360px; width: min(92%, 360px);
+    gap: 10px; gap: clamp(7px, 1vh, 13px);
+    margin-top: 28px; margin-top: clamp(14px, 2.6vh, 36px);
   }
   .weather-hour {
     -webkit-flex-direction: row; flex-direction: row;
     -webkit-justify-content: space-between; justify-content: space-between;
     max-width: none; width: 100%;
+    padding: 14px 22px;
     padding: clamp(8px, 1.3vh, 18px) clamp(16px, 5vw, 24px);
   }
   .weather-hour .wh-time {
     -webkit-flex: 0 0 auto; flex: 0 0 auto; min-width: 3.4em; text-align: left;
-    font-size: clamp(21px, 5.4vw, 34px);
+    font-size: 28px; font-size: clamp(21px, 5.4vw, 34px);
   }
   .weather-hour .wh-ico {
     margin: 0; -webkit-flex: 0 0 auto; flex: 0 0 auto;
-    font-size: clamp(32px, 7.6vw, 52px);
+    font-size: 44px; font-size: clamp(32px, 7.6vw, 52px);
   }
   .weather-hour .wh-temp {
     -webkit-flex: 0 0 auto; flex: 0 0 auto; min-width: 2.6em; text-align: right;
-    font-size: clamp(26px, 6.6vw, 44px);
+    font-size: 36px; font-size: clamp(26px, 6.6vw, 44px);
   }
   /* dátum do toku, nech neprekrýva riadky na vysokom obsahu */
   .weather-date {
-    position: static; margin-top: clamp(16px, 3vh, 34px); bottom: auto;
+    position: static;
+    margin-top: 24px; margin-top: clamp(16px, 3vh, 34px); bottom: auto;
   }
 }
 /* ===== SETTINGS ===== */

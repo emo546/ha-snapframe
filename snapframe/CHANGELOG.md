@@ -11,7 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - **Redesigned weather screen for legibility from across the room** – a large hero (icon + oversized temperature), fluid `clamp()`/viewport-based typography that scales up on bigger displays, and 6 big hourly forecast items sampled evenly across the full 12 h span. Higher-contrast text, modern rounded cards, and a subtle highlight on the upcoming hour. Pure CSS, no external assets.
-- **Orientation-aware layout** – in landscape (typical wall-mounted frame) the hourly forecast is a row of cards; in portrait (tablet/phone on end) it flips to full-width rows stacked top-to-bottom (time · icon · temperature), sized to fit the screen without scrolling. Re-lays out automatically on rotation.
+- **Orientation-aware layout** – in landscape (typical wall-mounted frame) the hourly forecast is a row of cards; in portrait (tablet/phone on end) it flips to compact rows stacked top-to-bottom (time · icon · temperature), sized to fit the screen without scrolling. Re-lays out automatically on rotation.
+- **Old-Safari fallbacks for the weather screen** – the redesigned weather screen used `clamp()`/`min()`, which older iPad Safari (9–12, a common photo-frame device) doesn't support, causing it to drop those declarations and render a tiny, broken layout. Every fluid size now has a plain-px fallback before the `clamp()`/`min()`, so old Safari gets a correct fixed-size layout while modern browsers still scale fluidly.
 - README weather-mode example updated to fetch the hourly forecast via `weather.get_forecasts` (required on recent HA versions, which removed the `forecast` state attribute) and pass it to SnapFrame.
 
 ## [2.8.0] – 2026
