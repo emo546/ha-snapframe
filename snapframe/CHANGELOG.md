@@ -5,11 +5,12 @@ All notable changes to this project will be documented in this file.
 ## [2.9.0] – 2026
 
 ### Added
-- **Hourly forecast strip in weather mode** – the weather screen now shows the next ~12 hours below the current conditions: a row of compact cards, each with the hour, a weather icon, and the temperature. On narrow/portrait screens it samples every 2nd hour to stay readable; on wide screens it shows all 12.
+- **Weather mode with hourly forecast** – trigger the weather screen (via motion → HA automation) and it shows current conditions plus the next ~12 hours as a row of large forecast cards (hour · icon · temperature), with the nearest hour highlighted.
 - The `/weather-update` endpoint now accepts an `hourly` array (list of `{datetime, temperature, condition}` — exactly the shape Home Assistant's `weather.get_forecasts` returns). Up to 12 entries are used.
 - When `forecast_high`/`forecast_low` are not provided, today's high/low is now auto-derived from the hourly temperatures.
 
 ### Changed
+- **Redesigned weather screen for legibility from across the room** – a horizontal hero (large icon + oversized temperature), fluid `clamp()`/viewport-based typography that scales up on bigger displays, and 6 big hourly cards (sampled across the 12 h span) instead of many small ones. Higher-contrast text, modern rounded cards, and a subtle highlight on the upcoming hour. Pure CSS, no external assets.
 - README weather-mode example updated to fetch the hourly forecast via `weather.get_forecasts` (required on recent HA versions, which removed the `forecast` state attribute) and pass it to SnapFrame.
 
 ## [2.8.0] – 2026

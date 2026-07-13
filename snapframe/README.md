@@ -368,7 +368,7 @@ To turn weather mode off early (e.g. from another automation, or a script tied t
 `condition` (and each `hourly[].condition`) should be one of the standard [Home Assistant weather conditions](https://www.home-assistant.io/integrations/weather/) (`sunny`, `cloudy`, `rainy`, `snowy`, `partlycloudy`, …) so it maps to a matching icon and translated label in the UI. Unknown conditions fall back to a generic icon.
 
 - All fields are optional. If `hourly` is present (up to 12 entries are used), SnapFrame renders an hourly-forecast strip (time · icon · temperature) below the current conditions, and — when `forecast_high`/`forecast_low` are omitted — derives today's high/low from those hourly temperatures.
-- `hourly[].datetime` accepts any ISO-8601 timestamp (the format Home Assistant's `weather.get_forecasts` returns); only the `HH:MM` part is shown. On narrow screens the strip samples every 2nd hour to stay readable.
+- `hourly[].datetime` accepts any ISO-8601 timestamp (the format Home Assistant's `weather.get_forecasts` returns); only the `HH:MM` part is shown. The screen displays 6 large cards sampled evenly across the sent range (e.g. every 2nd hour over 12 h) so it stays readable from across the room; the nearest hour is highlighted.
 
 ---
 

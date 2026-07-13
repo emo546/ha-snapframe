@@ -899,53 +899,84 @@ html, body {
   text-shadow: 0 2px 10px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.8);
 }
 /* ===== WEATHER SLIDE ===== */
+/* Fluidná typografia (clamp + vw): škáluje sa s veľkosťou obrazovky,
+   aby bola obrazovka čitateľná aj z druhého konca miestnosti. */
 #weather-slide {
   position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 80;
-  background: radial-gradient(ellipse at 50% 30%, #16233d 0%, #060810 75%);
+  background:
+    radial-gradient(ellipse at 50% 26%, #1c2c4a 0%, #0a1120 55%, #05070e 100%);
   display: none; -webkit-flex-direction: column; flex-direction: column;
   align-items: center; justify-content: center; text-align: center;
+  padding: 4vh 4vw; -webkit-box-sizing: border-box; box-sizing: border-box;
   opacity: 0; -webkit-transition: opacity 1s ease-in-out; transition: opacity 1s ease-in-out;
 }
 #weather-slide.visible { display: -webkit-flex; display: flex; opacity: 1; }
-.weather-icon {
-  font-size: 92px; line-height: 1; margin-bottom: 4px;
-  filter: drop-shadow(0 6px 20px rgba(0,0,0,0.55));
-  -webkit-filter: drop-shadow(0 6px 20px rgba(0,0,0,0.55));
+/* — Hero: veľká ikona + obrovská teplota vedľa seba — */
+.weather-hero {
+  display: -webkit-flex; display: flex; -webkit-align-items: center; align-items: center;
+  -webkit-justify-content: center; justify-content: center;
+  gap: clamp(12px, 2.5vw, 40px);
 }
+.weather-icon {
+  font-size: clamp(78px, 12vw, 168px); line-height: 1;
+  filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
+  -webkit-filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
+}
+.weather-main { text-align: left; }
 .weather-temp {
-  font-size: 82px; font-weight: 200; letter-spacing: -2px;
-  color: #fff; line-height: 1;
+  font-size: clamp(92px, 16vw, 220px); font-weight: 200; letter-spacing: -0.03em;
+  color: #fff; line-height: 0.9;
+  text-shadow: 0 3px 30px rgba(0,0,0,0.5);
 }
 .weather-cond {
-  font-size: 20px; font-weight: 300; letter-spacing: 1px;
-  color: rgba(255,255,255,0.62); margin-top: 10px;
+  font-size: clamp(20px, 3vw, 44px); font-weight: 300; letter-spacing: 0.01em;
+  color: rgba(255,255,255,0.82); margin-top: clamp(4px, 0.8vw, 14px);
 }
+/* — Max/Min dnešného dňa — */
 .weather-range {
-  margin-top: 22px; display: -webkit-flex; display: flex; gap: 32px;
-  font-size: 15px; letter-spacing: 1px; text-transform: uppercase;
-  color: rgba(255,255,255,0.4);
+  margin-top: clamp(18px, 3.2vh, 44px);
+  display: -webkit-flex; display: flex; gap: clamp(24px, 4vw, 64px);
+  font-size: clamp(15px, 1.7vw, 24px); letter-spacing: 0.12em; text-transform: uppercase;
+  color: rgba(255,255,255,0.5);
 }
-.weather-range .val { color: #fff; font-size: 18px; text-transform: none; margin-left: 6px; letter-spacing: 0; }
+.weather-range .val {
+  color: #fff; font-size: clamp(19px, 2.2vw, 32px);
+  text-transform: none; margin-left: clamp(6px, 0.7vw, 12px); letter-spacing: 0;
+}
+/* — Hodinová predpoveď: menej, ale veľkých kariet, čitateľných zďaleka — */
 .weather-hourly {
-  margin-top: 34px; display: -webkit-flex; display: flex;
-  -webkit-flex-wrap: nowrap; flex-wrap: nowrap; gap: 4px;
-  max-width: 94%; overflow: hidden;
+  margin-top: clamp(26px, 4.5vh, 70px);
+  display: -webkit-flex; display: flex; -webkit-flex-wrap: nowrap; flex-wrap: nowrap;
+  gap: clamp(8px, 1.2vw, 20px);
+  width: 100%; max-width: 1500px; -webkit-justify-content: center; justify-content: center;
 }
 .weather-hour {
   display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column;
-  align-items: center; -webkit-flex: 1 1 0; flex: 1 1 0; min-width: 0;
-  padding: 12px 4px 11px; border-radius: 12px;
-  background: rgba(255,255,255,0.05);
+  -webkit-align-items: center; align-items: center; -webkit-flex: 1 1 0; flex: 1 1 0;
+  min-width: 0; max-width: 220px;
+  padding: clamp(14px, 1.8vh, 26px) clamp(4px, 1vw, 16px) clamp(13px, 1.7vh, 24px);
+  border-radius: clamp(16px, 1.8vw, 26px);
+  background: rgba(255,255,255,0.055); border: 1px solid rgba(255,255,255,0.07);
+}
+.weather-hour.now {
+  background: rgba(120,170,255,0.16); border-color: rgba(140,185,255,0.4);
 }
 .weather-hour .wh-time {
-  font-size: 12px; letter-spacing: 0.5px; color: rgba(255,255,255,0.45);
+  font-size: clamp(15px, 1.9vw, 27px); letter-spacing: 0.03em; font-weight: 300;
+  color: rgba(255,255,255,0.72);
 }
-.weather-hour .wh-ico  { font-size: 26px; line-height: 1; margin: 7px 0 6px; }
-.weather-hour .wh-temp { font-size: 17px; font-weight: 300; color: #fff; }
+.weather-hour.now .wh-time { color: #cfe0ff; }
+.weather-hour .wh-ico  {
+  font-size: clamp(34px, 4.6vw, 68px); line-height: 1;
+  margin: clamp(9px, 1.3vh, 18px) 0 clamp(8px, 1.1vh, 16px);
+}
+.weather-hour .wh-temp {
+  font-size: clamp(23px, 3.2vw, 46px); font-weight: 400; color: #fff; line-height: 1;
+}
 .weather-date {
-  position: absolute; bottom: 26px; left: 0; right: 0; text-align: center;
-  font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
-  color: rgba(255,255,255,0.26);
+  position: absolute; bottom: clamp(20px, 3.5vh, 44px); left: 0; right: 0; text-align: center;
+  font-size: clamp(13px, 1.4vw, 20px); letter-spacing: 0.22em; text-transform: uppercase;
+  color: rgba(255,255,255,0.32);
 }
 /* ===== SETTINGS ===== */
 .settings-btn {
@@ -1163,9 +1194,13 @@ html, body {
     <div id="overlay-location"></div>
   </div>
   <div id="weather-slide">
-    <div class="weather-icon" id="weather-icon"></div>
-    <div class="weather-temp" id="weather-temp"></div>
-    <div class="weather-cond" id="weather-cond"></div>
+    <div class="weather-hero">
+      <div class="weather-icon" id="weather-icon"></div>
+      <div class="weather-main">
+        <div class="weather-temp" id="weather-temp"></div>
+        <div class="weather-cond" id="weather-cond"></div>
+      </div>
+    </div>
     <div class="weather-range" id="weather-range"></div>
     <div class="weather-hourly" id="weather-hourly"></div>
     <div class="weather-date" id="weather-date"></div>
@@ -1627,8 +1662,9 @@ function renderHourly(hourly) {
   var host = document.getElementById("weather-hourly");
   if (!hourly || !hourly.length) { host.innerHTML = ""; host.style.display = "none"; return; }
   host.style.display = "";
-  // Na úzkych obrazovkách zobraz max 6 stĺpcov (každú druhú hodinu), inak až 12
-  var maxCols = (window.innerWidth < 640) ? 6 : 12;
+  // Zobraz max 6 veľkých kariet – čitateľnejšie zďaleka než 12 malých.
+  // Ak máme viac hodín, rovnomerne navzorkuj naprieč celým rozsahom (napr. každú druhú hodinu).
+  var maxCols = 6;
   var list = hourly;
   if (list.length > maxCols) {
     var step = Math.ceil(list.length / maxCols);
@@ -1641,7 +1677,7 @@ function renderHourly(hourly) {
     var h = list[j];
     var ico  = WEATHER_EMOJI[h.condition] || "🌡️";
     var temp = (h.temperature != null) ? Math.round(h.temperature) + "°" : "--";
-    html += "<div class=\"weather-hour\">"
+    html += "<div class=\"weather-hour" + (j === 0 ? " now" : "") + "\">"
           + "<div class=\"wh-time\">" + escHtml(h.time || "") + "</div>"
           + "<div class=\"wh-ico\">" + ico + "</div>"
           + "<div class=\"wh-temp\">" + escHtml(temp) + "</div>"
