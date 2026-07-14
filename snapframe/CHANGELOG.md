@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.9.1] – 2026
+
+### Fixed
+- **Weather screen on old iPad Safari** – the portrait hourly forecast rendered as an ugly full-width boxy "table" on older iPads. Root cause: the layout relied on flexbox features that old iPad Safari (9–13) handles poorly or not at all — flex `gap` (unsupported before Safari 14.1) and buggy flexbox sizing — on top of the already-fallbacked `clamp()`/`min()`. The portrait hourly rows are now built with `display: table`/`table-cell` (rock-solid on ancient Safari) instead of flexbox, the MAX/MIN line no longer depends on flex `gap`, and the whole weather screen degrades cleanly to a centered block layout even with no flexbox support at all. Verified by simulating flexbox-off + no `clamp/min/gap`.
+- **Stale cache on wall displays** – the slideshow HTML (which embeds all CSS/JS) is now served with `Cache-Control: no-store`, so a mounted tablet picks up new versions after an add-on update/rebuild without manually clearing Safari's website data.
+
 ## [2.9.0] – 2026
 
 ### Added

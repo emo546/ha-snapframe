@@ -1,5 +1,5 @@
 name: "SnapFrame – Digital Photo Frame"
-version: "2.9.0"
+version: "2.9.1"
 slug: "snapframe"
 description: "Turn any old tablet or iPad into a smart digital photo frame. Watches an SMB share, converts HEIC/HEIF to JPG, and serves a fullscreen slideshow with albums, EXIF date/GPS overlay, swipe gestures, web upload, night mode and a motion-triggered weather screen."
 url: "https://github.com/emo546/ha-snapframe"

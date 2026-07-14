@@ -943,8 +943,6 @@ html, body {
 /* — Max/Min dnešného dňa — */
 .weather-range {
   margin-top: 30px; margin-top: clamp(18px, 3.2vh, 44px);
-  display: -webkit-flex; display: flex;
-  gap: 44px; gap: clamp(24px, 4vw, 64px);
   font-size: 18px; font-size: clamp(15px, 1.7vw, 24px);
   letter-spacing: 0.12em; text-transform: uppercase;
   color: rgba(255,255,255,0.5);
@@ -952,8 +950,9 @@ html, body {
 .weather-range .val {
   color: #fff;
   font-size: 24px; font-size: clamp(19px, 2.2vw, 32px);
-  text-transform: none;
-  margin-left: 8px; margin-left: clamp(6px, 0.7vw, 12px); letter-spacing: 0;
+  text-transform: none; letter-spacing: 0;
+  margin-left: 8px; margin-left: clamp(6px, 0.7vw, 12px);
+  margin-right: 22px;  /* medzera pred ďalším popiskom aj bez flex `gap` (staré Safari) */
 }
 /* — Hodinová predpoveď: menej, ale veľkých kariet, čitateľných zďaleka — */
 .weather-hourly {
@@ -1016,32 +1015,35 @@ html, body {
   .weather-range {
     margin-top: 20px; margin-top: clamp(10px, 1.8vh, 26px);
     font-size: 20px; font-size: clamp(15px, 3.3vw, 24px);
-    gap: 40px; gap: clamp(26px, 8vw, 56px);
   }
   .weather-range .val { font-size: 24px; font-size: clamp(19px, 4.2vw, 28px); }
+  /* Hodiny ako riadky zhora dole. Zámerne NIE flexbox ani gap/clamp/min pre
+     štruktúru – starý iPad Safari (9–13) má buggy flexbox a nepozná gap/clamp/min.
+     display:table + table-cell funguje spoľahlivo aj na prastarom Safari. */
   .weather-hourly {
-    -webkit-flex-direction: column; flex-direction: column;
+    display: block;
     width: 360px; width: min(92%, 360px);
-    gap: 10px; gap: clamp(7px, 1vh, 13px);
+    max-width: 92%;
+    margin-left: auto; margin-right: auto;
     margin-top: 28px; margin-top: clamp(14px, 2.6vh, 36px);
   }
   .weather-hour {
-    -webkit-flex-direction: row; flex-direction: row;
-    -webkit-justify-content: space-between; justify-content: space-between;
-    max-width: none; width: 100%;
+    display: table; table-layout: fixed; width: 100%;
+    -webkit-flex: 0 1 auto; flex: 0 1 auto; max-width: none;
+    margin: 0 auto 10px; margin-bottom: clamp(7px, 1vh, 13px);
     padding: 14px 22px;
     padding: clamp(8px, 1.3vh, 18px) clamp(16px, 5vw, 24px);
   }
   .weather-hour .wh-time {
-    -webkit-flex: 0 0 auto; flex: 0 0 auto; min-width: 3.4em; text-align: left;
+    display: table-cell; vertical-align: middle; text-align: left; width: 32%;
     font-size: 28px; font-size: clamp(21px, 5.4vw, 34px);
   }
   .weather-hour .wh-ico {
-    margin: 0; -webkit-flex: 0 0 auto; flex: 0 0 auto;
+    display: table-cell; vertical-align: middle; text-align: center; margin: 0;
     font-size: 44px; font-size: clamp(32px, 7.6vw, 52px);
   }
   .weather-hour .wh-temp {
-    -webkit-flex: 0 0 auto; flex: 0 0 auto; min-width: 2.6em; text-align: right;
+    display: table-cell; vertical-align: middle; text-align: right; width: 32%;
     font-size: 36px; font-size: clamp(26px, 6.6vw, 44px);
   }
   /* dátum do toku, nech neprekrýva riadky na vysokom obsahu */
@@ -1951,7 +1953,13 @@ fetchWeatherStatus();
     html = html.replace("__SLEEP_START__",    SLEEP_START)
     html = html.replace("__SLEEP_END__",      SLEEP_END)
     html = html.replace("__WEATHER_INTERVAL__", str(WEATHER_PHOTO_INTERVAL))
-    return Response(html, mimetype="text/html; charset=utf-8")
+    resp = Response(html, mimetype="text/html; charset=utf-8")
+    # Nekešuj HTML (obsahuje všetok CSS/JS) – nástenný displej tak vždy dostane
+    # aktuálnu verziu po update/rebuild bez ručného čistenia cache v Safari.
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"]        = "no-cache"
+    resp.headers["Expires"]       = "0"
+    return resp
 
 
 # ── Thumbnail pregenerácia ────────────────────────────────────────────────────
