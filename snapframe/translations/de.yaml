@@ -1,0 +1,90 @@
+configuration:
+  smb_server:
+    name: "SMB-Server"
+    description: "IP-Adresse oder Hostname des Rechners mit der Freigabe."
+  smb_share:
+    name: "Freigabename"
+    description: "Name der Freigabe, ohne Schrägstriche."
+  smb_version:
+    name: "SMB-Protokollversion"
+    description: "3.0 belassen. Ältere NAS-Geräte brauchen ggf. 2.1 oder 1.0."
+  smb_username:
+    name: "Benutzername"
+    description: "Benutzer mit Lese- und Schreibrechten auf der Freigabe."
+  smb_password:
+    name: "Passwort"
+    description: "Passwort dieses Benutzers."
+  watch_folder:
+    name: "Überwachter Ordner"
+    description: "Wo neue Fotos ankommen. HEIC/HEIF wird von hier konvertiert."
+  output_folder:
+    name: "Fotobibliothek"
+    description: "Ordner, den der Rahmen zeigt. Unterordner werden zu Alben."
+  delete_original:
+    name: "Original-HEIC löschen"
+    description: "HEIC-Datei nach der Umwandlung in JPG entfernen."
+  jpg_quality:
+    name: "JPG-Qualität"
+    description: "Qualität der umgewandelten Fotos, 1–100."
+  thumb_quality:
+    name: "Vorschau-Qualität"
+    description: "Qualität der angezeigten Bilder, 1–100."
+  thumb_max_px:
+    name: "Vorschaugröße"
+    description: "Längere Kante in Pixeln. Auf Retina-Displays fordert der Rahmen größere Varianten an."
+  thumb_cache:
+    name: "Speicherort der Vorschauen"
+    description: "addon = auf der Home-Assistant-Platte (schneller); share = bei den Fotos (spart HA-Speicher)."
+  scan_interval_hours:
+    name: "Scan-Intervall (Stunden)"
+    description: "Wie oft nach neuen HEIC-Dateien gesucht wird."
+  slideshow_seconds:
+    name: "Sekunden pro Foto"
+    description: "Wie lange jedes Foto zu sehen ist."
+  web_port:
+    name: "Web-Port"
+    description: "Port, auf den sich die Tablets verbinden."
+  basic_auth_user:
+    name: "Basic-Auth-Benutzer"
+    description: "Optional. Beide Felder ausfüllen, um den Rahmen zu schützen."
+  basic_auth_password:
+    name: "Basic-Auth-Passwort"
+    description: "Optional. Passwort für den obigen Benutzer."
+  language:
+    name: "Sprache"
+    description: "Sprache der Oberfläche: sk, en oder de."
+  sleep_start:
+    name: "Nachtmodus ab"
+    description: "Zum Beispiel 23:00. Leer lassen, um nie abzudunkeln."
+  sleep_end:
+    name: "Nachtmodus bis"
+    description: "Zum Beispiel 07:00."
+  weather_photo_interval:
+    name: "Fotos zwischen Wetteranzeigen"
+    description: "Wie viele Fotos bis zur nächsten Wetteranzeige."
+  weather_mode_duration_minutes:
+    name: "Dauer des Wettermodus (Minuten)"
+    description: "Wie lange der Wettermodus nach Auslösung aktiv bleibt."
+  anthropic_api_key:
+    name: "Claude-API-Schlüssel (optional)"
+    description: "Wird nur genutzt, wenn der Abfuhrkalender lokal nicht lesbar ist."
+  api_token:
+    name: "API-Token (optional)"
+    description: "Erfordert einen Token für Upload, Löschen und Kalenderänderungen. Ansehen bleibt offen."
+  mqtt_enabled:
+    name: "Über MQTT veröffentlichen"
+    description: "Sensoren in Home Assistant automatisch per MQTT Discovery anlegen."
+  mqtt_host:
+    name: "MQTT-Broker"
+    description: "Leer lassen, um das Mosquitto-Add-on zu verwenden."
+  mqtt_port:
+    name: "MQTT-Port"
+    description: "Normalerweise 1883."
+  mqtt_username:
+    name: "MQTT-Benutzer"
+    description: "Nur bei manuell gesetztem Broker nötig."
+  mqtt_password:
+    name: "MQTT-Passwort"
+    description: "Nur bei manuell gesetztem Broker nötig."
+network:
+  8099/tcp: "Weboberfläche – Port, den die Tablets für die Diashow öffnen."

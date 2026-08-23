@@ -1,0 +1,90 @@
+configuration:
+  smb_server:
+    name: "SMB server"
+    description: "IP address or hostname of the machine sharing your photos."
+  smb_share:
+    name: "Share name"
+    description: "Name of the shared folder, without slashes."
+  smb_version:
+    name: "SMB protocol version"
+    description: "Leave at 3.0. Older NAS boxes and Windows shares may need 2.1 or 1.0."
+  smb_username:
+    name: "Username"
+    description: "User with read and write access to the share."
+  smb_password:
+    name: "Password"
+    description: "Password for that user."
+  watch_folder:
+    name: "Watched folder"
+    description: "Where new photos land. HEIC/HEIF files here are converted."
+  output_folder:
+    name: "Photo library"
+    description: "The folder the frame shows. Subfolders become albums."
+  delete_original:
+    name: "Delete the original HEIC"
+    description: "Remove the HEIC file once it has been converted to JPG."
+  jpg_quality:
+    name: "JPG quality"
+    description: "Quality of converted photos, 1–100."
+  thumb_quality:
+    name: "Thumbnail quality"
+    description: "Quality of the images the frame displays, 1–100."
+  thumb_max_px:
+    name: "Thumbnail size"
+    description: "Longest edge in pixels. The frame also requests larger sizes on high-DPI screens."
+  thumb_cache:
+    name: "Where to keep thumbnails"
+    description: "addon = on the Home Assistant disk (faster); share = next to your photos (saves HA disk space)."
+  scan_interval_hours:
+    name: "Scan interval (hours)"
+    description: "How often to look for new HEIC files. You can always scan now from the app."
+  slideshow_seconds:
+    name: "Seconds per photo"
+    description: "How long each photo stays on screen."
+  web_port:
+    name: "Web port"
+    description: "Port the tablets connect to."
+  basic_auth_user:
+    name: "Basic auth user"
+    description: "Optional. Set both fields to password-protect the whole frame."
+  basic_auth_password:
+    name: "Basic auth password"
+    description: "Optional. Password for the user above."
+  language:
+    name: "Language"
+    description: "UI language of the frame: sk, en or de."
+  sleep_start:
+    name: "Night mode starts"
+    description: "For example 23:00. Leave empty to never blank the screen."
+  sleep_end:
+    name: "Night mode ends"
+    description: "For example 07:00."
+  weather_photo_interval:
+    name: "Photos between weather screens"
+    description: "How many photos to show before the weather screen returns."
+  weather_mode_duration_minutes:
+    name: "Weather mode duration (minutes)"
+    description: "How long weather mode stays on after a motion sensor triggers it."
+  anthropic_api_key:
+    name: "Claude API key (optional)"
+    description: "Only used when the schedule import cannot read a leaflet locally. This is the one feature that sends data outside your network."
+  api_token:
+    name: "API token (optional)"
+    description: "Set this to require a token for uploading, deleting and changing the schedule. Viewing stays open so the frame needs no login."
+  mqtt_enabled:
+    name: "Publish to MQTT"
+    description: "Create Home Assistant sensors automatically via MQTT discovery."
+  mqtt_host:
+    name: "MQTT broker"
+    description: "Leave empty to use the Mosquitto add-on configured in Home Assistant."
+  mqtt_port:
+    name: "MQTT port"
+    description: "Usually 1883."
+  mqtt_username:
+    name: "MQTT user"
+    description: "Only needed when you set the broker by hand."
+  mqtt_password:
+    name: "MQTT password"
+    description: "Only needed when you set the broker by hand."
+network:
+  8099/tcp: "Web interface – Port the tablets open to see the slideshow."

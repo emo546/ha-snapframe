@@ -6,6 +6,10 @@ url: "https://github.com/emo546/ha-snapframe"
 arch:
   - aarch64
   - amd64
+# Po prvom úspešnom behu workflow "Release" odkomentuj – Home Assistant potom
+# stiahne hotový obraz namiesto toho, aby ho buildoval na zariadení.
+# Predtým to nezapínaj: obraz, ktorý v registri ešte nie je, znemožní inštaláciu.
+# image: "ghcr.io/emo546/{arch}-addon-snapframe"
 init: false
 map:
   - type: addon_config

@@ -1,0 +1,13 @@
+# Lint sa drží štýlu, ktorý projekt reálne používa: .format() namiesto
+# f-stringov a kompaktné jednoriadkové bloky sú zámer, nie nedopatrenie.
+# Vyberáme preto pravidlá, ktoré hľadajú chyby, nie odchýlky od PEP 8.
+line-length = 110
+target-version = "py312"
+
+[lint]
+select = ["E4", "E7", "E9", "F", "W", "B"]
+ignore = [
+    "E701",  # viac príkazov na riadku – používa sa vedome pre krátke vetvy
+    "E702",
+    "E741",
+]

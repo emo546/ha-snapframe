@@ -40,7 +40,7 @@ def build_pdf(marks, year=2026, weeks=tuple(range(1, 13))):
     c.setFont("Helvetica", 8)
     c.drawString(40, 800, "Zvozovy harmonogram {}".format(year))
     x0, y0, cw, ch = 60, 760, 22.0, 16.0
-    for i, name in enumerate(["Po", "Ut", "St", "St", "Pi"]):
+    for i, _name in enumerate(["Po", "Ut", "St", "St", "Pi"]):
         c.drawString(x0 + 30 + i * cw + 6, y0 + 6, ["Po", "Ut", "St", "Št", "Pi"][i])
     for row, wk in enumerate(weeks):
         y = y0 - (row + 1) * ch
