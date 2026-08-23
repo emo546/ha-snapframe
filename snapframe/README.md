@@ -17,6 +17,7 @@ If you have a retired iPad, an old Android tablet, or any spare touchscreen gath
 - ⬆️ **Web upload** – upload photos directly from a phone's browser without needing SMB access; supports multiple files and creating new albums on the fly
 - 🌤️ **Motion-triggered weather screen** – trigger "weather mode" from a Home Assistant motion sensor (e.g. in the morning) so the slideshow inserts a nicely designed current-weather + today's forecast screen every few photos
 - 🗑️ **Waste collection reminders** – set up your municipal collection calendar in the app (every other Thursday, first Monday of the month, or plain dates) and the frame reminds you the day before which bin goes out — as a corner badge on the photos, a full-screen reminder every few photos, or both
+- 📄 **Schedule import** – upload the municipal collection leaflet and SnapFrame reads the dates straight out of the PDF, locally, with no OCR and no API key
 - 🌙 **Night mode** – configurable sleep schedule blanks the screen (plain black or an animated starry sky) to save your display and avoid a glowing photo frame at 3am
 - 🌍 **Multi-language UI** – Slovak, English, and German out of the box
 - ⚙️ **In-app settings** – night-mode theme can be changed directly from the slideshow, no need to touch the Home Assistant add-on configuration
@@ -129,6 +130,7 @@ You can also embed it as an `iframe` panel in your Lovelace dashboard if you'd r
 | `sleep_end` | *(empty)* | Night mode end time, e.g. `07:00`; leave empty to disable |
 | `weather_photo_interval` | `8` | How many photos to show between weather screens while weather mode is active (2–50) |
 | `weather_mode_duration_minutes` | `120` | How long weather mode stays active after being triggered via `/weather-mode/on` (5–720) |
+| `anthropic_api_key` | `""` | **Optional.** Enables reading a collection schedule from a photo/scan when the local PDF parser can't handle it. Leave empty to keep everything on your own network — see [Importing the municipal schedule](#importing-the-municipal-schedule) |
 
 ### Example configuration
 
@@ -153,6 +155,7 @@ sleep_start: "23:00"
 sleep_end: "07:00"
 weather_photo_interval: 8
 weather_mode_duration_minutes: 120
+anthropic_api_key: ""
 ```
 
 Most of the above (except SMB credentials) can also be changed later — night-mode theme (black vs. starry sky) is even adjustable directly from the slideshow via the ⚙ settings icon, without touching the add-on config at all.
@@ -269,6 +272,34 @@ And under the timing options:
 The reminder is hidden while the weather screen is showing, during night mode, and outside the slideshow.
 
 > **Time zones:** the add-on only ships the *list of upcoming collection days*; the tablet's browser decides what "today" and "tomorrow" mean using its own local time. A container running in UTC therefore can't shift your reminder by a day.
+
+### Importing the municipal schedule
+
+Typing a year of collection dates by hand is the thing that makes a feature like this get abandoned, so the schedule can be read straight out of the leaflet your municipality hands out. In the waste calendar editor tap **"Import from schedule…"** and upload the file.
+
+**Vector PDFs are parsed on the add-on itself — no OCR, no network, no API key.** These schedules are grid calendars in which the meaning is carried by the *colour of the cell*, not by any text; OCR would hand back the day numbers with no idea which of them are collections. A vector PDF contains both the day numbers and the coloured rectangles together with their coordinates, so the two can be matched directly. Rows are numbered by ISO week and columns are weekdays, so **(ISO week + weekday) yields the exact date** — the month blocks never have to be identified at all — and the printed day number then acts as a checksum: a cell whose number disagrees is dropped rather than guessed.
+
+What you get back is a list of **series**, not finished waste types:
+
+| Why | What it means for you |
+|---|---|
+| Palettes differ between municipalities | Nothing is hard-coded to one village's colours; the importer reports whatever colours it finds |
+| One leaflet often carries several schedules | A fortnightly *and* a monthly mixed-waste round can both be printed on the same page — only you know which applies to your household |
+| Outlines mark variants, not new types | A green border on a black cell can mean "monthly round"; a brown border on a yellow cell can mean "bio *and* plastic that day". Both the per-colour total and the exact fill/outline combination are offered |
+
+Each series is shown with its colour swatch, how often it repeats (e.g. *"every 2 weeks · Thursday"*), how many dates it has and the range they span. Tick the ones that apply to you, pick a waste type for each, and add them.
+
+> **Nothing is saved automatically.** The parsed dates go into the editor for you to confirm first — a misread date means a missed bin, which is exactly what this feature exists to prevent.
+
+Concrete dates are imported rather than a guessed recurrence rule, so real-world exceptions survive intact: if the fortnightly round skips New Year's Eve, it stays skipped instead of generating a phantom reminder.
+
+#### Scans and photos (optional, off by default)
+
+If you upload a photo or scan, or the PDF's layout isn't one the parser recognises, SnapFrame can fall back to sending the file to Claude to extract the dates. This requires the optional `anthropic_api_key` option and is **disabled unless you set it**.
+
+> This fallback is the only part of SnapFrame that sends anything outside your network. The PDF parser above needs no key and no internet, so if your municipality publishes a normal vector PDF you never need this.
+
+---
 
 ### Using the schedule in Home Assistant
 
@@ -441,6 +472,7 @@ To turn weather mode off early (e.g. from another automation, or a script tied t
 | `POST` | `/waste/config` | Replace the waste calendar config (JSON body; validated and clamped server-side) |
 | `GET` | `/waste/status` | Display settings + expanded collection days for the next ~3 weeks |
 | `GET` | `/waste/next` | Next collection — shaped for a Home Assistant REST sensor |
+| `POST` | `/waste/import` | Extract collection series from an uploaded schedule (`multipart/form-data`: `file`); returns a proposal, saves nothing |
 
 ### `/status` response example
 

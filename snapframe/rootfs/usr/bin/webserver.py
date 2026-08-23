@@ -55,6 +55,7 @@ SLEEP_START     = _env_str("SLEEP_START", "")         # "23:00" alebo ""
 SLEEP_END       = _env_str("SLEEP_END",   "")         # "07:00" alebo ""
 WEATHER_PHOTO_INTERVAL   = _env_int("WEATHER_PHOTO_INTERVAL", 8)      # fotiek medzi weather slidmi
 WEATHER_MODE_DURATION_MIN = _env_int("WEATHER_MODE_DURATION_MIN", 120)  # min trvania po /weather-mode/on
+ANTHROPIC_API_KEY = _env_str("ANTHROPIC_API_KEY")   # nepovinné – záloha pre skeny/fotky harmonogramu
 
 GEOCACHE_FILE = "/data/geocode_cache.json"
 ALLOWED_EXT   = (".jpg", ".jpeg", ".png")
@@ -67,6 +68,12 @@ try:
     _has_state = True
 except ImportError:
     _has_state = False
+
+try:
+    import waste_import as _waste_import
+    _has_waste_import = True
+except ImportError:               # pragma: no cover
+    _has_waste_import = False
 
 try:
     import waste as _waste
@@ -199,6 +206,25 @@ TRANSLATIONS = {
         "waste_dates_one":      "{0} dátum",
         "waste_dates_few":      "{0} dátumy",
         "waste_dates_many":     "{0} dátumov",
+        # — Import harmonogramu —
+        "wimp_open":            "\u2191 Načítať z harmonogramu…",
+        "wimp_title":           "Import harmonogramu",
+        "wimp_intro":           "Nahraj PDF alebo fotku obecného rozpisu vývozu. Nič sa neuloží, kým nepotvrdíš.",
+        "wimp_pick":            "Vybrať súbor…",
+        "wimp_working":         "Spracúvam harmonogram…",
+        "wimp_found":           "Nájdené rady vývozov ({0}) · rok {1}",
+        "wimp_hint":            "Leták obce často obsahuje viac rozpisov naraz (napr. dvojtýždňový aj mesačný zvoz). Zaškrtni len tie, ktoré platia pre teba.",
+        "wimp_use":             "Použiť",
+        "wimp_add":             "Pridať vybraté zvozy",
+        "wimp_none_selected":   "Vyber aspoň jeden rad.",
+        "wimp_added":           "✓ Pridané: {0} zvozov",
+        "wimp_err_format":      "Nepodporovaný formát. Nahraj PDF, JPG alebo PNG.",
+        "wimp_err_large":       "Súbor je príliš veľký (max 12 MB).",
+        "wimp_err_parse":       "V súbore sa nepodarilo nájsť kalendár vývozov.",
+        "wimp_err_novision":    "Toto rozloženie parser nepozná. Rozpoznanie z fotky vieš zapnúť doplnením Anthropic API kľúča v konfigurácii add-onu.",
+        "wimp_err_generic":     "Import zlyhal.",
+        "wimp_via_pdf":         "načítané priamo z PDF",
+        "wimp_via_vision":      "rozpoznané z obrázka",
     },
     "en": {
         "app_title":            "SnapFrame",
@@ -297,6 +323,25 @@ TRANSLATIONS = {
         "waste_dates_one":      "{0} date",
         "waste_dates_few":      "{0} dates",
         "waste_dates_many":     "{0} dates",
+        # — Schedule import —
+        "wimp_open":            "\u2191 Import from schedule…",
+        "wimp_title":           "Import schedule",
+        "wimp_intro":           "Upload the PDF or a photo of your municipal collection schedule. Nothing is saved until you confirm.",
+        "wimp_pick":            "Choose file…",
+        "wimp_working":         "Reading the schedule…",
+        "wimp_found":           "Collection series found ({0}) · year {1}",
+        "wimp_hint":            "Municipal leaflets often hold several schedules at once (e.g. a fortnightly and a monthly round). Tick only the ones that apply to you.",
+        "wimp_use":             "Use",
+        "wimp_add":             "Add selected collections",
+        "wimp_none_selected":   "Select at least one series.",
+        "wimp_added":           "✓ Added: {0} collections",
+        "wimp_err_format":      "Unsupported format. Upload a PDF, JPG or PNG.",
+        "wimp_err_large":       "File is too large (max 12 MB).",
+        "wimp_err_parse":       "No collection calendar could be found in this file.",
+        "wimp_err_novision":    "This layout isn't recognised by the parser. To enable reading from photos, add an Anthropic API key in the add-on configuration.",
+        "wimp_err_generic":     "Import failed.",
+        "wimp_via_pdf":         "read straight from the PDF",
+        "wimp_via_vision":      "recognised from the image",
     },
     "de": {
         "app_title":            "SnapFrame",
@@ -395,6 +440,25 @@ TRANSLATIONS = {
         "waste_dates_one":      "{0} Termin",
         "waste_dates_few":      "{0} Termine",
         "waste_dates_many":     "{0} Termine",
+        # — Kalenderimport —
+        "wimp_open":            "\u2191 Aus Abfuhrkalender laden…",
+        "wimp_title":           "Kalender importieren",
+        "wimp_intro":           "Lade das PDF oder ein Foto des kommunalen Abfuhrkalenders hoch. Es wird nichts gespeichert, bis du bestätigst.",
+        "wimp_pick":            "Datei wählen…",
+        "wimp_working":         "Kalender wird gelesen…",
+        "wimp_found":           "Gefundene Abfuhrreihen ({0}) · Jahr {1}",
+        "wimp_hint":            "Kommunale Faltblätter enthalten oft mehrere Kalender gleichzeitig (z. B. 14-tägig und monatlich). Kreuze nur die an, die für dich gelten.",
+        "wimp_use":             "Verwenden",
+        "wimp_add":             "Ausgewählte Abfuhren hinzufügen",
+        "wimp_none_selected":   "Wähle mindestens eine Reihe.",
+        "wimp_added":           "✓ Hinzugefügt: {0} Abfuhren",
+        "wimp_err_format":      "Format nicht unterstützt. Lade ein PDF, JPG oder PNG hoch.",
+        "wimp_err_large":       "Datei ist zu groß (max. 12 MB).",
+        "wimp_err_parse":       "In dieser Datei wurde kein Abfuhrkalender gefunden.",
+        "wimp_err_novision":    "Dieses Layout kennt der Parser nicht. Für die Erkennung aus Fotos trage einen Anthropic-API-Schlüssel in der Add-on-Konfiguration ein.",
+        "wimp_err_generic":     "Import fehlgeschlagen.",
+        "wimp_via_pdf":         "direkt aus dem PDF gelesen",
+        "wimp_via_vision":      "aus dem Bild erkannt",
     },
 }
 
@@ -1008,6 +1072,50 @@ def waste_next_route():
         "text":       ", ".join(labels),
     })
 
+@app.route("/waste/import", methods=["POST"])
+def waste_import_route():
+    """Vytiahni termíny z nahratého harmonogramu. Nič neukladá – iba vráti návrh.
+
+    Rozpoznanie sa NIKDY neuloží automaticky: zle prečítaný termín znamená
+    zmeškaný kontajner, čo je práve to, čomu má celá funkcia zabrániť.
+    Používateľ preto najprv v appke potvrdí, ktoré rady sa ho týkajú.
+    """
+    if not _has_waste_import:
+        return jsonify({"ok": False, "error": "unavailable"}), 503
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "no file"}), 400
+    data = f.read(_waste_import.MAX_UPLOAD_BYTES + 1)
+    if len(data) > _waste_import.MAX_UPLOAD_BYTES:
+        return jsonify({"ok": False, "error": "too_large"}), 413
+    if not data:
+        return jsonify({"ok": False, "error": "empty"}), 400
+
+    ext  = Path(_safe_filename(f.filename)).suffix.lower()
+    lang = _waste_lang()
+    is_pdf = ext == ".pdf" or data[:5] == b"%PDF-"
+
+    result = _waste_import.parse_pdf(data, lang) if is_pdf else {"ok": False, "error": "not_pdf"}
+    if not result.get("ok"):
+        # Fotka, sken alebo neznáme rozloženie – skús vision model, ak je kľúč.
+        media = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                 ".webp": "image/webp", ".gif": "image/gif",
+                 ".pdf": "application/pdf"}.get(ext, "application/pdf" if is_pdf else "")
+        if not media:
+            return jsonify({"ok": False, "error": "unsupported_format"}), 400
+        if not ANTHROPIC_API_KEY:
+            return jsonify({"ok": False, "error": result.get("error") or "no_api_key",
+                            "vision_available": False}), 422
+        log.info("Harmonogram: parser neuspel ({}), skúšam vision".format(result.get("error")))
+        result = _waste_import.parse_with_vision(data, media, lang, ANTHROPIC_API_KEY)
+        if not result.get("ok"):
+            return jsonify(result), 422
+
+    log.info("Harmonogram naimportovaný ({}): {} radov, rok {}".format(
+        result.get("source"), len(result.get("series", [])), result.get("year")))
+    result["types"] = _waste.type_catalog(lang) if _has_waste else []
+    return jsonify(result)
+
 # ── HTML ──────────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -1420,6 +1528,39 @@ html, body {
   .waste-hint  { font-size: 20px; font-size: clamp(15px, 4vw, 26px); }
   .waste-date  { position: static; margin-top: 26px; }
 }
+/* ===== ODPAD: import harmonogramu ===== */
+.wimp-intro { font-size: 12px; line-height: 1.55; color: #6a6a6a; margin-bottom: 12px; }
+.wimp-hint  { font-size: 11px; line-height: 1.55; color: #4a4a4a; margin: 8px 0 12px; }
+#waste-import-file { display: none; }
+.wimp-serie {
+  display: table; width: 100%; background: #151515; border: 1px solid #232323;
+  border-radius: 11px; padding: 12px 13px; margin-bottom: 8px;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.wimp-serie.on { border-color: #4a7fd6; background: #171e2b; }
+.wimp-serie .ws-sw {
+  display: table-cell; vertical-align: middle; width: 34px;
+}
+.wimp-serie .ws-chip {
+  width: 22px; height: 22px; border-radius: 6px;
+  border: 3px solid transparent; -webkit-box-sizing: border-box; box-sizing: border-box;
+}
+.wimp-serie .ws-txt { display: table-cell; vertical-align: middle; padding-right: 8px; }
+.wimp-serie .ws-name { color: #e8e8e8; font-size: 14px; margin-bottom: 2px; }
+.wimp-serie .ws-sub  { color: #6b6b6b; font-size: 11.5px; line-height: 1.45; }
+.wimp-serie .ws-box  {
+  display: table-cell; vertical-align: middle; width: 24px;
+  text-align: right; color: #3a3a3a; font-size: 17px;
+}
+.wimp-serie.on .ws-box { color: #5b9bf8; }
+.wimp-type {
+  /* prisadnutý k svojmu radu, aby bolo jasné, ku ktorému riadku patrí */
+  width: 92%; margin: -4px 0 10px auto; display: block;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  background: #1b1b1b; border: 1px solid #2a2a2a; border-radius: 8px;
+  color: #ddd; font-size: 13px; padding: 8px 10px; outline: none;
+}
 /* ===== ODPAD: editor kalendára ===== */
 #waste-dialog {
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -1769,6 +1910,7 @@ html, body {
         <div class="wd-label" id="t-waste-rules-label"></div>
         <div id="waste-rule-list"></div>
         <button class="wd-btn ghost" id="t-waste-add-rule" onclick="wdNewRule()"></button>
+        <button class="wd-btn ghost" id="t-wimp-open" onclick="wimpOpen()"></button>
       </div>
 
       <div class="wd-group">
@@ -1779,6 +1921,19 @@ html, body {
       <div class="wd-status" id="waste-status"></div>
       <button class="wd-btn primary" id="t-waste-save" onclick="wdSaveConfig()"></button>
       <button class="wd-btn" id="t-waste-close" onclick="closeWasteDialog()"></button>
+    </div>
+
+    <!-- import harmonogramu -->
+    <div id="waste-import" style="display:none">
+      <div class="wimp-intro" id="t-wimp-intro"></div>
+      <input type="file" id="waste-import-file" accept=".pdf,.png,.jpg,.jpeg,image/*,application/pdf"
+             onchange="wimpUpload(this)">
+      <button class="wd-btn" id="t-wimp-pick"
+              onclick="document.getElementById('waste-import-file').click()"></button>
+      <div class="wd-status" id="wimp-status"></div>
+      <div id="wimp-result"></div>
+      <button class="wd-btn primary" id="t-wimp-add" style="display:none" onclick="wimpAdd()"></button>
+      <button class="wd-btn" id="t-wimp-cancel" onclick="wimpClose()"></button>
     </div>
 
     <!-- editor jedného zvozu -->
@@ -2084,6 +2239,12 @@ function applyTranslations() {
   document.getElementById("t-waste-rule-ok").textContent        = tr("waste_save");
   document.getElementById("t-waste-rule-cancel").textContent    = tr("waste_cancel");
   document.getElementById("t-waste-rule-delete").textContent    = tr("waste_delete");
+  // — import harmonogramu —
+  document.getElementById("t-wimp-open").textContent   = tr("wimp_open");
+  document.getElementById("t-wimp-intro").textContent  = tr("wimp_intro");
+  document.getElementById("t-wimp-pick").textContent   = tr("wimp_pick");
+  document.getElementById("t-wimp-add").textContent    = tr("wimp_add");
+  document.getElementById("t-wimp-cancel").textContent = tr("waste_cancel");
 }
 
 // ── Settings (sleep theme) ──────────────────────────────────────────────────
@@ -2679,6 +2840,7 @@ function openWasteDialog() {
   document.getElementById("waste-dialog").style.display = "block";
   document.getElementById("waste-main").style.display   = "block";
   document.getElementById("waste-editor").style.display = "none";
+  document.getElementById("waste-import").style.display = "none";
   document.getElementById("waste-dialog").scrollTop     = 0;
   wdStatus("", "");
   xhrGet("/waste/config", function(err, text) {
@@ -2861,6 +3023,140 @@ function wdSaveConfig() {
     });
   };
   xhr.send(JSON.stringify(wdCfg));
+}
+
+// ── Import harmonogramu ──────────────────────────────────────────────────────
+var wimpSeries = [];   // rady rozpoznané zo súboru
+var wimpYear   = 0;
+
+function wimpOpen() {
+  document.getElementById("waste-main").style.display   = "none";
+  document.getElementById("waste-import").style.display = "block";
+  document.getElementById("waste-dialog").scrollTop     = 0;
+  wimpReset();
+}
+
+function wimpClose() {
+  document.getElementById("waste-import").style.display = "none";
+  document.getElementById("waste-main").style.display   = "block";
+  document.getElementById("waste-dialog").scrollTop     = 0;
+  wimpReset();
+  wdRenderMain();
+}
+
+function wimpReset() {
+  wimpSeries = []; wimpYear = 0;
+  document.getElementById("wimp-result").innerHTML = "";
+  document.getElementById("waste-import-file").value = "";
+  document.getElementById("t-wimp-add").style.display = "none";
+  wimpStatus("", "");
+}
+
+function wimpStatus(msg, cls) {
+  var el = document.getElementById("wimp-status");
+  el.innerHTML = escHtml(msg || "");
+  el.className = "wd-status" + (cls ? " " + cls : "");
+}
+
+function wimpErrKey(code) {
+  if (code === "too_large")           { return "wimp_err_large"; }
+  if (code === "unsupported_format")  { return "wimp_err_format"; }
+  if (code === "no_api_key")          { return "wimp_err_novision"; }
+  if (code === "no_calendar_found" || code === "no_marks_found" ||
+      code === "pdf_parse_failed"     || code === "not_pdf") { return "wimp_err_parse"; }
+  return "wimp_err_generic";
+}
+
+function wimpUpload(input) {
+  if (!input.files || !input.files.length) { return; }
+  wimpStatus(tr("wimp_working"), "");
+  document.getElementById("wimp-result").innerHTML = "";
+  document.getElementById("t-wimp-add").style.display = "none";
+  var fd = new FormData();
+  fd.append("file", input.files[0]);
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", "/waste/import", true);
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) { return; }
+    var data = null;
+    try { data = JSON.parse(xhr.responseText); } catch (e) {}
+    if (!data || !data.ok) {
+      var code = data ? data.error : "";
+      // Ak parser neuspel a vision nie je k dispozícii, povedz to konkrétne.
+      if (data && data.vision_available === false && code !== "too_large") {
+        code = "no_api_key";
+      }
+      wimpStatus(tr(wimpErrKey(code)), "err");
+      return;
+    }
+    wimpSeries = data.series || [];
+    wimpYear   = data.year || 0;
+    for (var i = 0; i < wimpSeries.length; i++) {
+      wimpSeries[i].selected = false;
+      wimpSeries[i].type = wimpSeries[i].suggested_type || "other";
+    }
+    wimpStatus(tr(data.source === "vision" ? "wimp_via_vision" : "wimp_via_pdf"), "ok");
+    wimpRender();
+  };
+  xhr.send(fd);
+}
+
+function wimpRender() {
+  var host = document.getElementById("wimp-result");
+  if (!wimpSeries.length) { host.innerHTML = ""; return; }
+  var html = "<div class=\"wd-label\">"
+           + escHtml(trf("wimp_found", [wimpSeries.length, wimpYear])) + "</div>"
+           + "<div class=\"wimp-hint\">" + escHtml(tr("wimp_hint")) + "</div>";
+  for (var i = 0; i < wimpSeries.length; i++) {
+    var s = wimpSeries[i];
+    var sw = "background:" + escHtml(s.fill)
+           + (s.outline ? ";border-color:" + escHtml(s.outline) : "");
+    var sub = [];
+    if (s.summary) { sub.push(s.summary); }
+    sub.push(s.count + "\u00d7");
+    if (s.dates && s.dates.length) { sub.push(s.dates[0] + " \u2026 " + s.dates[s.dates.length - 1]); }
+    html += "<div class=\"wimp-serie" + (s.selected ? " on" : "") + "\" onclick=\"wimpToggle(" + i + ")\">"
+          + "<div class=\"ws-sw\"><div class=\"ws-chip\" style=\"" + sw + "\"></div></div>"
+          + "<div class=\"ws-txt\"><div class=\"ws-name\">"
+          + escHtml(s.colour_name || s.fill) + "</div>"
+          + "<div class=\"ws-sub\">" + escHtml(sub.join(" \u00b7 ")) + "</div></div>"
+          + "<div class=\"ws-box\">" + (s.selected ? "\u2713" : "\u25cb") + "</div></div>";
+    if (s.selected) {
+      html += "<select class=\"wimp-type\" onchange=\"wimpSetType(" + i + ",this.value)\">";
+      for (var j = 0; j < wdTypes.length; j++) {
+        html += "<option value=\"" + escHtml(wdTypes[j].id) + "\""
+              + (wdTypes[j].id === s.type ? " selected" : "") + ">"
+              + escHtml(wdTypes[j].icon + " " + wdTypes[j].label) + "</option>";
+      }
+      html += "</select>";
+    }
+  }
+  host.innerHTML = html;
+  var any = false;
+  for (var k = 0; k < wimpSeries.length; k++) { if (wimpSeries[k].selected) { any = true; } }
+  document.getElementById("t-wimp-add").style.display = any ? "" : "none";
+}
+
+function wimpToggle(i)      { wimpSeries[i].selected = !wimpSeries[i].selected; wimpRender(); }
+function wimpSetType(i, v)  { wimpSeries[i].type = v; }
+
+function wimpAdd() {
+  var added = 0;
+  for (var i = 0; i < wimpSeries.length; i++) {
+    var s = wimpSeries[i];
+    if (!s.selected || !s.dates || !s.dates.length) { continue; }
+    wdCfg.rules.push({
+      id: _newRuleId(), type: s.type, label: "",
+      recurrence: { kind: "dates", dates: s.dates.slice(0) },
+      from: "", to: "", skip: [], extra: []
+    });
+    added++;
+  }
+  if (!added) { wimpStatus(tr("wimp_none_selected"), "err"); return; }
+  // Import sám osebe nemá zmysel, kým je pripomienka vypnutá.
+  wdCfg.enabled = true;
+  wimpClose();
+  wdStatus(trf("wimp_added", [added]), "ok");
 }
 
 // ── Editor jedného zvozu ─────────────────────────────────────────────────────

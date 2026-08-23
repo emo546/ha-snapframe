@@ -43,6 +43,7 @@ You can display your family photos, organize them into albums, show photo inform
 | 🌙 **Night mode**                 | Automatically switch the display to night mode during the night |
 | 🌤️ **Weather mode**              | Show weather information when triggered               |
 | 🗑️ **Waste collection reminders** | Know the day before which bin to put out               |
+| 📄 **Schedule import**            | Upload the municipal leaflet, dates are read out of it |
 | 🏠 **Home Assistant integration** | Control SnapFrame using Home Assistant                |
 | 🌍 **Multi-language UI**          | Use SnapFrame in different languages                  |
 | 📱 **Old hardware friendly**      | Give an old tablet a new purpose                      |
@@ -180,7 +181,6 @@ It's open source and I'm continuing to improve it.
 Some things I'd like to explore:
 
 * [ ] More Home Assistant controls
-* [ ] Calendar import for waste collection schedules (ICS)
 * [ ] More display modes
 * [ ] Better tablet power management
 * [ ] More customization options
