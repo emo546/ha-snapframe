@@ -677,3 +677,12 @@ html, body {
   color: #444; font-size: 17px;
   -webkit-transform: translateY(-50%); transform: translateY(-50%); display: none;
 }
+
+/* Hlásenie o strate spojenia so serverom – rám sa medzitým sám pokúša
+   pripojiť, takže je to informácia, nie výzva na akciu. */
+#conn-lost {
+  position: absolute; top: 14px; left: 18px; z-index: 95; display: none;
+  color: rgba(255,255,255,0.55); font-size: 12px; letter-spacing: 0.5px;
+  background: rgba(0,0,0,0.35); border-radius: 8px; padding: 5px 10px;
+  pointer-events: none; text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+}

@@ -36,6 +36,7 @@ function applyTranslations() {
   document.getElementById("t-upload-gps-hint").textContent = tr("upload_gps_hint");
   document.getElementById("upload-go-btn").textContent   = tr("upload_go");
   document.getElementById("ss-msg").textContent          = tr("no_photos");
+  document.getElementById("conn-lost").textContent      = tr("conn_lost");
   document.getElementById("t-del-title").textContent     = tr("delete_title");
   document.getElementById("t-del-sub").textContent       = tr("delete_sub");
   document.getElementById("t-del-yes").textContent       = tr("delete_yes");
@@ -232,6 +233,7 @@ function checkSleep() {
     if (advanceTimer) { clearInterval(advanceTimer); advanceTimer = null; }
     if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
     updateWasteBadge();
+    maybeDailyReload();
   } else {
     el.style.display = "none";
     _stopMeteorShowerLoop();
@@ -244,6 +246,27 @@ function checkSleep() {
   }
 }
 setInterval(checkSleep, 60000);
+
+// ── Adresovanie ───────────────────────────────────────────────────────────────
+// Stránka môže bežať na koreni (tablet ide priamo na port) alebo pod cestou
+// Home Assistant ingressu. Všetky requesty sú preto relatívne k stránke.
+var API_BASE = (function() {
+  var path = location.pathname || "/";
+  return path.charAt(path.length - 1) === "/" ? path : path.replace(/[^\/]*$/, "");
+})();
+
+function api(path) {
+  return API_BASE + String(path).replace(/^\//, "");
+}
+
+// Šírka, akú má zmysel pýtať pre fotku na celú obrazovku. Bez toho dostane
+// Retina iPad 1024 px roztiahnutých cez 2048 fyzických – a vyzerá to tak.
+function displayWidth() {
+  var dpr  = window.devicePixelRatio || 1;
+  var side = Math.max(screen.width || 0, screen.height || 0,
+                      window.innerWidth || 0, window.innerHeight || 0);
+  return Math.min(2048, Math.round(side * dpr)) || 1024;
+}
 
 // ── API token ─────────────────────────────────────────────────────────────────
 // Ak je add-on nakonfigurovaný s api_token, zápisové endpointy ho vyžadujú.
@@ -270,15 +293,49 @@ function tokenRetry(xhr, retry) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function xhrGet(url, cb) {
+// Rám visí na stene mesiace a add-on sa občas reštartuje (update HA, výpadok
+// NAS). Bez opakovania by jediná neúspešná odpoveď nechala obrazovku zamrznutú
+// až do ručného obnovenia stránky.
+var OFFLINE_RETRIES = [2000, 5000, 15000, 30000];
+var _offline = false;
+
+function setOffline(state) {
+  if (state === _offline) { return; }
+  _offline = state;
+  var el = document.getElementById("conn-lost");
+  if (el) { el.style.display = state ? "block" : "none"; }
+}
+
+function xhrGet(url, cb, _attempt) {
+  var attempt = _attempt || 0;
   var xhr = new XMLHttpRequest();
-  xhr.open("GET", url, true);
+  xhr.open("GET", api(url), true);
   xhr.onreadystatechange = function() {
-    if (xhr.readyState === 4) {
-      cb(xhr.status === 200 ? null : new Error("HTTP " + xhr.status), xhr.responseText);
+    if (xhr.readyState !== 4) { return; }
+    if (xhr.status === 200) {
+      setOffline(false);
+      cb(null, xhr.responseText);
+      return;
     }
+    // 4xx je odpoveď servera, nie výpadok – opakuje sa len spojenie a 5xx.
+    if ((xhr.status === 0 || xhr.status >= 500) && attempt < OFFLINE_RETRIES.length) {
+      setOffline(true);
+      setTimeout(function() { xhrGet(url, cb, attempt + 1); }, OFFLINE_RETRIES[attempt]);
+      return;
+    }
+    if (xhr.status === 0) { setOffline(true); }
+    cb(new Error("HTTP " + xhr.status), xhr.responseText);
   };
-  xhr.send();
+  try {
+    xhr.send();
+  } catch (e) {
+    setOffline(true);
+    if (attempt < OFFLINE_RETRIES.length) {
+      setTimeout(function() { xhrGet(url, cb, attempt + 1); }, OFFLINE_RETRIES[attempt]);
+    } else {
+      cb(e, "");
+    }
+  }
 }
 function escHtml(s) {
   return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -293,7 +350,7 @@ function encodePath(p) {
 function triggerScan() {
   var btn = document.getElementById("scan-btn");
   var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/scan", true);
+  xhr.open("POST", api("/scan"), true);
   withToken(xhr);
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) { return; }
@@ -362,10 +419,11 @@ function loadAlbumCovers() {
       var btn = document.getElementById("album-btn-" + idx);
       if (!btn) { return; }
       var img = new Image();
+      var coverUrl = api("/album-cover/" + encodeURIComponent(name));
       img.onload = function() {
-        btn.style.backgroundImage = "url('/album-cover/" + encodeURIComponent(name) + "')";
+        btn.style.backgroundImage = "url('" + coverUrl + "')";
       };
-      img.src = "/album-cover/" + encodeURIComponent(name);
+      img.src = coverUrl;
     })(albumNames[i], i);
   }
 }
@@ -431,27 +489,63 @@ function fetchPhotosAndStart() {
 
 function pickEffect() { return EFFECTS[Math.floor(Math.random() * EFFECTS.length)]; }
 
+function photoUrl(filename) {
+  return api("/thumb/" + encodePath(filename)) + "?w=" + displayWidth();
+}
+
+/** Načíta fotku do cache prehliadača a zavolá cb, keď je naozaj pripravená. */
+function preloadPhoto(filename, cb) {
+  var img = new Image();
+  var done = false;
+  function finish(ok) {
+    if (done) { return; }
+    done = true;
+    if (cb) { cb(ok); }
+  }
+  img.onload  = function() { finish(true); };
+  img.onerror = function() { finish(false); };
+  // Poistka pre pomalý share: prechod nesmie čakať donekonečna.
+  setTimeout(function() { finish(false); }, 8000);
+  img.src = photoUrl(filename);
+  return img;
+}
+
+var _nextPreload = null;
+
 function showPhoto(index) {
   if (!photos.length) { return; }
   hideWeatherSlide();
   hideWasteSlide();
   var idx      = ((index % photos.length) + photos.length) % photos.length;
   var filename = photos[idx];
-  var url      = "/thumb/" + encodePath(filename);
   var nextEl   = activeIsA ? document.getElementById("photoB") : document.getElementById("photoA");
   var prevEl   = activeIsA ? document.getElementById("photoA") : document.getElementById("photoB");
   var effect   = pickEffect();
-  nextEl.style.backgroundImage = "url(" + url + ")";
-  nextEl.className = "photo " + effect + "-start";
-  setTimeout(function() {
-    nextEl.className = "photo visible " + effect + "-end";
-    prevEl.className = "photo";
-  }, 50);
-  activeIsA = !activeIsA;
+  var mine     = ++_showToken;
+
+  // Prechod sa spustí až keď je fotka stiahnutá – inak sa na pomalej sieti
+  // odfadeuje prázdny rám a fotka doskočí až doprostred animácie.
+  preloadPhoto(filename, function() {
+    if (mine !== _showToken) { return; }     // medzitým sa prepli inde
+    nextEl.style.backgroundImage = "url(" + photoUrl(filename) + ")";
+    nextEl.className = "photo " + effect + "-start";
+    setTimeout(function() {
+      if (mine !== _showToken) { return; }
+      nextEl.className = "photo visible " + effect + "-end";
+      prevEl.className = "photo";
+    }, 50);
+    activeIsA = !activeIsA;
+    // Nasledujúca fotka sa ťahá počas toho, ako sa pozerá na túto.
+    if (photos.length > 1) {
+      _nextPreload = preloadPhoto(photos[(idx + 1) % photos.length], null);
+    }
+  });
+
   document.getElementById("photo-counter").innerHTML = (idx + 1) + " / " + photos.length;
   loadExifOverlay(filename);
   updateWasteBadge();
 }
+var _showToken = 0;
 
 function loadExifOverlay(filename) {
   document.getElementById("overlay-date").innerHTML     = "";
@@ -466,7 +560,21 @@ function loadExifOverlay(filename) {
   });
 }
 
+// Rám beží mesiace bez obnovenia stránky. Starému Safari po čase rastie pamäť
+// a nový build add-onu by sa inak neprejavil, kým stránku niekto ručne
+// neobnoví – raz za deň sa teda obnoví sama (v noci, ak je nočný režim).
+var _pageLoadedAt = Date.now();
+var PAGE_MAX_AGE  = 24 * 3600 * 1000;
+
+function maybeDailyReload() {
+  if (Date.now() - _pageLoadedAt < PAGE_MAX_AGE) { return false; }
+  if (SLEEP_START && SLEEP_END && !_sleeping) { return false; }   // počkaj na noc
+  location.reload();
+  return true;
+}
+
 function advanceTick() {
+  if (maybeDailyReload()) { return; }
   if (weatherModeActive && weatherData && photosSinceWeather >= WEATHER_INTERVAL) {
     photosSinceWeather = 0;
     photosSinceWaste++;
@@ -874,7 +982,7 @@ function wdRenderPreview() {
 function wdSaveConfig() {
   wdStatus("…", "");
   var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/waste/config", true);
+  xhr.open("POST", api("/waste/config"), true);
   xhr.setRequestHeader("Content-Type", "application/json");
   withToken(xhr);
   xhr.onreadystatechange = function() {
@@ -956,7 +1064,7 @@ function wimpUpload(input) {
   var fd = new FormData();
   fd.append("file", input.files[0]);
   var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/waste/import", true);
+  xhr.open("POST", api("/waste/import"), true);
   withToken(xhr);
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) { return; }
@@ -1330,7 +1438,7 @@ function confirmDelete() {
   if (!photos.length) { return; }
   var filename = photos[currentIndex];
   var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/delete/" + encodePath(filename), true);
+  xhr.open("POST", api("/delete/" + encodePath(filename)), true);
   withToken(xhr);
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) { return; }
@@ -1438,7 +1546,7 @@ function _uploadNext(files, idx, album, errCount) {
   var fd = new FormData();
   fd.append("file", files[idx]); fd.append("album", album);
   var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/upload", true);
+  xhr.open("POST", api("/upload"), true);
   withToken(xhr);
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) { return; }

@@ -165,6 +165,7 @@ TRANSLATIONS = {
         "app_subtitle":         "FOTO RÁMIK",
         "scan_btn":             "\u21bb Skenuj teraz",
         "token_prompt":         "Zadaj API token SnapFrame (add-on \u2192 api_token):",
+        "conn_lost":            "Bez spojenia so serverom \u2013 sk\u00fa\u0161am znova\u2026",
         "scan_started":         "\u2713 Spusten\u00e9",
         "order_label":          "Poradie fotiek",
         "order_date":           "Chronologicky",
@@ -283,6 +284,7 @@ TRANSLATIONS = {
         "app_subtitle":         "PHOTO FRAME",
         "scan_btn":             "\u21bb Scan now",
         "token_prompt":         "Enter the SnapFrame API token (add-on \u2192 api_token):",
+        "conn_lost":            "No connection to the server \u2013 retrying\u2026",
         "scan_started":         "\u2713 Started",
         "order_label":          "Photo order",
         "order_date":           "Chronological",
@@ -401,6 +403,7 @@ TRANSLATIONS = {
         "app_subtitle":         "FOTO RAHMEN",
         "scan_btn":             "\u21bb Jetzt scannen",
         "token_prompt":         "SnapFrame-API-Token eingeben (Add-on \u2192 api_token):",
+        "conn_lost":            "Keine Verbindung zum Server \u2013 neuer Versuch\u2026",
         "scan_started":         "\u2713 Gestartet",
         "order_label":          "Reihenfolge",
         "order_date":           "Chronologisch",
@@ -915,6 +918,10 @@ def _token_ok() -> bool:
 
 @app.before_request
 def check_auth():
+    # /health je zámerne bez autentifikácie: je to sonda pre watchdog
+    # Home Assistanta, ktorý žiadne prihlasovacie údaje nemá.
+    if request.endpoint == "health_route":
+        return
     if BASIC_AUTH_USER:
         auth = request.authorization
         ok = (auth is not None
@@ -1067,6 +1074,11 @@ def trigger_scan():
         _state.request_scan()
         return jsonify({"ok": True})
     return jsonify({"ok": False}), 503
+
+@app.route("/health")
+def health_route():
+    """Sonda pre watchdog add-onu – nič nepočíta, len potvrdí, že server žije."""
+    return jsonify({"ok": True})
 
 @app.route("/status")
 def status_route():

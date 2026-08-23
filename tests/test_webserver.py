@@ -212,6 +212,15 @@ class TestAuth(WebTestCase):
         })
         self.assertEqual(ok.status_code, 200)
 
+    def test_health_probe_stays_open(self):
+        """Watchdog Supervisora nemá prihlasovacie údaje – nesmie dostať 401."""
+        webserver.BASIC_AUTH_USER = "admin"
+        webserver.BASIC_AUTH_PASS = "tajne"
+        webserver.API_TOKEN       = "t0ken"
+        r = self.client.get("/health")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.get_json()["ok"])
+
     def test_reads_stay_open_when_token_is_set(self):
         webserver.API_TOKEN = "t0ken"
         self.assertEqual(self.client.get("/photos").status_code, 200)
