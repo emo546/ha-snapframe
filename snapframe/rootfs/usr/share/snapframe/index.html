@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>SnapFrame</title>
+<link rel="stylesheet" href="static/app.css?v=__ASSET_V__">
+</head>
+<body>
+
+<!-- SLEEP OVERLAY -->
+<div id="screen-sleep">
+  <svg id="starfield-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+</div>
+
+<!-- SETTINGS DIALOG -->
+<div id="settings-dialog" onclick="if(event.target===this){closeSettings();}">
+  <div class="settings-box">
+    <div class="settings-title" id="t-settings-title"></div>
+    <div class="settings-group">
+      <div class="settings-label" id="t-settings-sleep-label"></div>
+      <div class="theme-options">
+        <div class="theme-opt" id="theme-opt-black" onclick="chooseSleepTheme('black')">
+          <div class="theme-preview"></div>
+          <div class="theme-opt-label" id="t-theme-black"></div>
+        </div>
+        <div class="theme-opt" id="theme-opt-stars" onclick="chooseSleepTheme('stars')">
+          <div class="theme-preview stars-preview">
+            <div class="tp-dot" style="width:2px;height:2px;top:10px;left:14px;opacity:.9"></div>
+            <div class="tp-dot" style="width:1.5px;height:1.5px;top:22px;left:34px;opacity:.6"></div>
+            <div class="tp-dot" style="width:1.5px;height:1.5px;top:8px;left:58px;opacity:.7"></div>
+            <div class="tp-dot" style="width:2px;height:2px;top:28px;left:78px;opacity:.85"></div>
+            <div class="tp-dot" style="width:1px;height:1px;top:16px;left:96px;opacity:.5"></div>
+            <div class="tp-dot" style="width:1.5px;height:1.5px;top:32px;left:120px;opacity:.6"></div>
+          </div>
+          <div class="theme-opt-label" id="t-theme-stars"></div>
+        </div>
+      </div>
+    </div>
+    <div class="settings-group">
+      <button class="wd-btn" id="t-waste-open-btn" onclick="openWasteDialog()"></button>
+    </div>
+    <button class="settings-close" id="t-settings-close" onclick="closeSettings()"></button>
+  </div>
+</div>
+
+<!-- EDITOR KALENDÁRA VÝVOZU ODPADU -->
+<div id="waste-dialog">
+  <div class="wd-inner">
+    <div class="wd-title" id="t-waste-title"></div>
+
+    <!-- prehľad + globálne nastavenia -->
+    <div id="waste-main">
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-enabled-label"></div>
+        <div class="wd-seg cols2" id="waste-enabled-seg">
+          <div class="wd-opt" id="waste-en-off" onclick="wdSetEnabled(0)"></div>
+          <div class="wd-opt" id="waste-en-on"  onclick="wdSetEnabled(1)"></div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-display-label"></div>
+        <div class="wd-seg cols3" id="waste-mode-seg">
+          <div class="wd-opt" id="waste-mode-overlay" onclick="wdSetMode('overlay')"></div>
+          <div class="wd-opt" id="waste-mode-slide"   onclick="wdSetMode('slide')"></div>
+          <div class="wd-opt" id="waste-mode-both"    onclick="wdSetMode('both')"></div>
+        </div>
+      </div>
+
+      <div class="wd-group" id="waste-interval-group">
+        <div class="wd-label" id="t-waste-interval-label"></div>
+        <div class="wd-stepper">
+          <div class="wd-step-btn" onclick="wdStep('photo_interval',-1,2,100)">&minus;</div>
+          <div class="wd-step-val" id="waste-interval-val"></div>
+          <div class="wd-step-btn" onclick="wdStep('photo_interval',1,2,100)">+</div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-days-label"></div>
+        <div class="wd-stepper">
+          <div class="wd-step-btn" onclick="wdStep('days_before',-1,0,7)">&minus;</div>
+          <div class="wd-step-val" id="waste-days-val"></div>
+          <div class="wd-step-btn" onclick="wdStep('days_before',1,0,7)">+</div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-check" id="waste-showday-check" onclick="wdToggleShowOnDay()">
+          <div class="wc-txt" id="t-waste-show-on-day"></div>
+          <div class="wc-box">&#10003;</div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-start-hour"></div>
+        <div class="wd-stepper">
+          <div class="wd-step-btn" onclick="wdStep('start_hour',-1,0,23)">&minus;</div>
+          <div class="wd-step-val" id="waste-hour-val"></div>
+          <div class="wd-step-btn" onclick="wdStep('start_hour',1,0,23)">+</div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-rules-label"></div>
+        <div id="waste-rule-list"></div>
+        <button class="wd-btn ghost" id="t-waste-add-rule" onclick="wdNewRule()"></button>
+        <button class="wd-btn ghost" id="t-wimp-open" onclick="wimpOpen()"></button>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-preview"></div>
+        <div id="waste-preview-list"></div>
+      </div>
+
+      <div class="wd-status" id="waste-status"></div>
+      <button class="wd-btn primary" id="t-waste-save" onclick="wdSaveConfig()"></button>
+      <button class="wd-btn" id="t-waste-close" onclick="closeWasteDialog()"></button>
+    </div>
+
+    <!-- import harmonogramu -->
+    <div id="waste-import" style="display:none">
+      <div class="wimp-intro" id="t-wimp-intro"></div>
+      <input type="file" id="waste-import-file" accept=".pdf,.png,.jpg,.jpeg,image/*,application/pdf"
+             onchange="wimpUpload(this)">
+      <button class="wd-btn" id="t-wimp-pick"
+              onclick="document.getElementById('waste-import-file').click()"></button>
+      <div class="wd-status" id="wimp-status"></div>
+      <div id="wimp-result"></div>
+      <button class="wd-btn primary" id="t-wimp-add" style="display:none" onclick="wimpAdd()"></button>
+      <button class="wd-btn" id="t-wimp-cancel" onclick="wimpClose()"></button>
+    </div>
+
+    <!-- editor jedného zvozu -->
+    <div id="waste-editor" style="display:none">
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-type-label"></div>
+        <div class="wd-seg cols4" id="waste-type-seg"></div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-name-label"></div>
+        <input type="text" class="wd-input" id="waste-name-input" maxlength="40">
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-recurrence"></div>
+        <div class="wd-seg cols3" id="waste-kind-seg">
+          <div class="wd-opt" id="waste-kind-weekly"  onclick="wdSetKind('weekly')"></div>
+          <div class="wd-opt" id="waste-kind-monthly" onclick="wdSetKind('monthly')"></div>
+          <div class="wd-opt" id="waste-kind-dates"   onclick="wdSetKind('dates')"></div>
+        </div>
+      </div>
+
+      <!-- týždenné -->
+      <div id="waste-weekly-box">
+        <div class="wd-group">
+          <div class="wd-label" id="t-waste-weekday"></div>
+          <div class="wd-seg cols7" id="waste-weekday-seg"></div>
+        </div>
+        <div class="wd-group">
+          <div class="wd-label" id="t-waste-every-weeks"></div>
+          <div class="wd-stepper">
+            <div class="wd-step-btn" onclick="wdStepRule('interval_weeks',-1,1,12)">&minus;</div>
+            <div class="wd-step-val" id="waste-weeks-val"></div>
+            <div class="wd-step-btn" onclick="wdStepRule('interval_weeks',1,1,12)">+</div>
+          </div>
+        </div>
+        <div class="wd-group" id="waste-anchor-group">
+          <div class="wd-label" id="t-waste-anchor"></div>
+          <input type="date" class="wd-input" id="waste-anchor-input"
+                 placeholder="YYYY-MM-DD" onchange="wdReadAnchor()">
+          <div class="wd-hint" id="t-waste-anchor-hint"></div>
+        </div>
+      </div>
+
+      <!-- mesačné -->
+      <div id="waste-monthly-box" style="display:none">
+        <div class="wd-group">
+          <div class="wd-label" id="t-waste-monthly-by"></div>
+          <div class="wd-seg cols2" id="waste-by-seg">
+            <div class="wd-opt" id="waste-by-weekday" onclick="wdSetMonthlyBy('weekday')"></div>
+            <div class="wd-opt" id="waste-by-day"     onclick="wdSetMonthlyBy('day')"></div>
+          </div>
+        </div>
+        <div id="waste-by-weekday-box">
+          <div class="wd-group">
+            <div class="wd-label" id="t-waste-week-of-month"></div>
+            <select class="wd-select" id="waste-wom-select" onchange="wdReadWom()"></select>
+          </div>
+          <div class="wd-group">
+            <div class="wd-label" id="t-waste-weekday-2"></div>
+            <div class="wd-seg cols7" id="waste-weekday-seg2"></div>
+          </div>
+        </div>
+        <div class="wd-group" id="waste-by-day-box" style="display:none">
+          <div class="wd-label" id="t-waste-day-of-month"></div>
+          <div class="wd-stepper">
+            <div class="wd-step-btn" onclick="wdStepRule('day_of_month',-1,1,31)">&minus;</div>
+            <div class="wd-step-val" id="waste-dom-val"></div>
+            <div class="wd-step-btn" onclick="wdStepRule('day_of_month',1,1,31)">+</div>
+          </div>
+        </div>
+        <div class="wd-group">
+          <div class="wd-label" id="t-waste-months"></div>
+          <div class="wd-chips" id="waste-months-chips"></div>
+        </div>
+      </div>
+
+      <!-- konkrétne dátumy -->
+      <div id="waste-dates-box" style="display:none">
+        <div class="wd-group">
+          <div class="wd-label" id="t-waste-dates-label"></div>
+          <div class="wd-daterow">
+            <div class="wd-dcell"><input type="date" class="wd-input" id="waste-date-input" placeholder="YYYY-MM-DD"></div>
+            <div class="wd-dbtn"><button class="wd-btn" style="margin:0" id="t-waste-add-date"
+                 onclick="wdAddDate('dates')"></button></div>
+          </div>
+          <div class="wd-chips" id="waste-dates-chips" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-valid-from"></div>
+        <input type="date" class="wd-input" id="waste-from-input" placeholder="YYYY-MM-DD" onchange="wdReadRange()">
+      </div>
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-valid-to"></div>
+        <input type="date" class="wd-input" id="waste-to-input" placeholder="YYYY-MM-DD" onchange="wdReadRange()">
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-skip-label"></div>
+        <div class="wd-daterow">
+          <div class="wd-dcell"><input type="date" class="wd-input" id="waste-skip-input" placeholder="YYYY-MM-DD"></div>
+          <div class="wd-dbtn"><button class="wd-btn" style="margin:0" id="t-waste-add-skip"
+               onclick="wdAddDate('skip')"></button></div>
+        </div>
+        <div class="wd-chips" id="waste-skip-chips" style="margin-top:10px"></div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-extra-label"></div>
+        <div class="wd-daterow">
+          <div class="wd-dcell"><input type="date" class="wd-input" id="waste-extra-input" placeholder="YYYY-MM-DD"></div>
+          <div class="wd-dbtn"><button class="wd-btn" style="margin:0" id="t-waste-add-extra"
+               onclick="wdAddDate('extra')"></button></div>
+        </div>
+        <div class="wd-chips" id="waste-extra-chips" style="margin-top:10px"></div>
+      </div>
+
+      <button class="wd-btn primary" id="t-waste-rule-ok"     onclick="wdCommitRule()"></button>
+      <button class="wd-btn"         id="t-waste-rule-cancel" onclick="wdCancelRule()"></button>
+      <button class="wd-btn danger"  id="t-waste-rule-delete" onclick="wdDeleteRule()"></button>
+    </div>
+  </div>
+</div>
+
+<!-- VÝBERNÁ OBRAZOVKA -->
+<div id="screen-select">
+  <button class="settings-btn" onclick="openSettings()">&#9881;</button>
+  <div class="sel-title" id="t-app-title"></div>
+  <div class="sel-subtitle" id="t-app-subtitle"></div>
+  <div class="top-actions">
+    <button id="scan-btn" class="scan-btn" onclick="triggerScan()"></button>
+  </div>
+  <div class="order-label" id="t-order-label"></div>
+  <div class="order-row">
+    <button class="order-btn active" id="btn-order-date" onclick="setOrder('date')"></button>
+    <button class="order-btn"        id="btn-order-rand" onclick="setOrder('random')"></button>
+  </div>
+  <div class="album-list" id="album-list"></div>
+  <button class="upload-toggle" onclick="toggleUpload()" id="t-upload-toggle"></button>
+  <div id="upload-section">
+    <label class="upload-label" id="t-upload-album-label"></label>
+    <select id="upload-album" class="upload-select" onchange="onAlbumChange(this)">
+      <option value="" id="t-upload-root"></option>
+      <option value="__new__" id="t-upload-new-option"></option>
+    </select>
+    <input type="text" id="upload-new-album" class="upload-select"
+           style="display:none;margin-top:-6px" oninput="onNewAlbumInput(this)">
+    <label class="upload-label" id="t-upload-files-label"></label>
+    <button class="upload-file-btn" id="upload-file-btn"
+            onclick="document.getElementById('upload-files').click()"></button>
+    <input type="file" id="upload-files" multiple
+           accept=".heic,.heif,.jpg,.jpeg,.png,image/*"
+           onchange="onFilesSelected(this)">
+    <div class="upload-gps-hint" id="t-upload-gps-hint"></div>
+    <button class="upload-go-btn" id="upload-go-btn" onclick="startUpload()"></button>
+    <div class="upload-status" id="upload-status"></div>
+  </div>
+</div>
+
+<!-- SLIDESHOW -->
+<div id="screen-slideshow">
+  <div class="photo" id="photoA"></div>
+  <div class="photo" id="photoB"></div>
+  <div id="photo-counter"></div>
+  <div id="overlay">
+    <div id="overlay-date"></div>
+    <div id="overlay-location"></div>
+  </div>
+  <div id="waste-badge">
+    <div class="wb-row">
+      <div class="wb-ico" id="waste-badge-ico"></div>
+      <div class="wb-text">
+        <div class="wb-when" id="waste-badge-when"></div>
+        <div class="wb-what" id="waste-badge-what"></div>
+      </div>
+    </div>
+  </div>
+  <div id="waste-slide">
+    <div class="waste-when"  id="waste-slide-when"></div>
+    <div class="waste-icons" id="waste-slide-icons"></div>
+    <div class="waste-names" id="waste-slide-names"></div>
+    <div class="waste-accent" id="waste-slide-accent"></div>
+    <div class="waste-hint"  id="waste-slide-hint"></div>
+    <div class="waste-date"  id="waste-slide-date"></div>
+  </div>
+  <div id="weather-slide">
+    <div class="weather-hero">
+      <div class="weather-icon" id="weather-icon"></div>
+      <div class="weather-main">
+        <div class="weather-temp" id="weather-temp"></div>
+        <div class="weather-cond" id="weather-cond"></div>
+      </div>
+    </div>
+    <div class="weather-range" id="weather-range"></div>
+    <div class="weather-hourly" id="weather-hourly"></div>
+    <div class="weather-date" id="weather-date"></div>
+  </div>
+  <div id="ss-msg"></div>
+  <div id="delete-dialog">
+    <div class="del-box">
+      <div class="del-title" id="t-del-title"></div>
+      <div class="del-sub"   id="t-del-sub"></div>
+      <button class="del-yes" id="t-del-yes" onclick="confirmDelete()"></button>
+      <button class="del-no"  id="t-del-no"  onclick="hideDeleteDialog()"></button>
+    </div>
+  </div>
+</div>
+
+<script>
+window.SNAPFRAME_CFG = __SNAPFRAME_CFG__;
+</script>
+<script src="static/app.js?v=__ASSET_V__"></script>
+</body>
+</html>

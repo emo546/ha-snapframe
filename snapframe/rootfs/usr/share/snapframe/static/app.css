@@ -1,0 +1,679 @@
+html, body {
+  margin: 0; padding: 0; width: 100%; height: 100%;
+  background: #0c0c0c;
+  font-family: -apple-system, Helvetica, Arial, sans-serif;
+  color: #eee; overflow: hidden;
+}
+/* ===== VÝBERNÁ OBRAZOVKA ===== */
+#screen-select {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 48px 24px 48px; -webkit-box-sizing: border-box;
+  box-sizing: border-box; text-align: center;
+}
+.sel-title {
+  font-size: 26px; font-weight: 200; letter-spacing: 8px;
+  text-transform: uppercase; color: #fff; margin-bottom: 4px;
+}
+.sel-subtitle {
+  font-size: 13px; color: #444; letter-spacing: 2px; margin-bottom: 18px;
+}
+.top-actions { margin-bottom: 32px; }
+.scan-btn {
+  background: transparent; border: 1px solid #2a2a2a; border-radius: 6px;
+  color: #555; font-size: 12px; letter-spacing: 1px; padding: 7px 16px;
+  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
+  -webkit-transition: color .15s, border-color .15s; transition: color .15s, border-color .15s;
+}
+.scan-btn.done { color: #4caf50; border-color: #4caf50; }
+.order-label {
+  font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+  color: #555; margin-bottom: 10px;
+}
+.order-row {
+  display: inline-block; border: 1px solid #2a2a2a; border-radius: 8px;
+  overflow: hidden; margin-bottom: 40px;
+}
+.order-btn {
+  display: inline-block; padding: 10px 24px; background: transparent;
+  border: none; color: #666; font-size: 14px; cursor: pointer; outline: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-transition: background .15s, color .15s; transition: background .15s, color .15s;
+}
+.order-btn.active { background: #222; color: #fff; }
+.album-list {
+  text-align: left; max-width: 460px; margin: 0 auto 32px;
+}
+.album-btn {
+  display: block; width: 100%; padding: 15px 18px; margin-bottom: 10px;
+  background: #161616; border: 1px solid #242424; border-radius: 10px;
+  color: #ddd; font-size: 16px; text-align: left; cursor: pointer; outline: none;
+  position: relative; overflow: hidden; -webkit-box-sizing: border-box;
+  box-sizing: border-box; -webkit-tap-highlight-color: transparent;
+  -webkit-transition: background .15s; transition: background .15s;
+  background-size: cover; background-position: center;
+}
+.album-btn:active { background-color: #222; }
+.album-btn.all-btn { border-color: #333; color: #fff; }
+.album-btn-overlay {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.62);
+}
+.album-btn-inner { position: relative; z-index: 1; }
+.album-icon { margin-right: 10px; opacity: 0.6; }
+.all-icon   { opacity: 0.9; }
+.album-count { float: right; color: #999; font-size: 13px; margin-top: 2px; }
+.sel-empty { color: #444; font-size: 14px; padding: 20px 0; text-align: center; }
+/* ===== UPLOAD ===== */
+.upload-toggle {
+  background: transparent; border: 1px solid #222; border-radius: 8px;
+  color: #555; font-size: 13px; letter-spacing: 1px; padding: 10px 22px;
+  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
+  margin-bottom: 16px; display: block; width: 100%; max-width: 460px;
+  margin-left: auto; margin-right: auto; text-align: center;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+}
+#upload-section {
+  display: none; max-width: 460px; margin: 0 auto 32px;
+  background: #111; border: 1px solid #222; border-radius: 12px;
+  padding: 20px 18px; text-align: left;
+}
+.upload-label {
+  font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+  color: #555; margin-bottom: 8px; display: block;
+}
+.upload-select {
+  width: 100%; background: #1c1c1c; border: 1px solid #2c2c2c;
+  border-radius: 7px; color: #ccc; font-size: 14px; padding: 10px 12px;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  margin-bottom: 16px; outline: none; -webkit-appearance: none;
+}
+.upload-file-btn {
+  display: block; width: 100%; padding: 12px; background: #1c1c1c;
+  border: 1px dashed #333; border-radius: 8px; color: #777;
+  font-size: 14px; text-align: center; cursor: pointer;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  margin-bottom: 14px; -webkit-tap-highlight-color: transparent; outline: none;
+}
+.upload-file-btn.has-files { border-color: #555; color: #bbb; }
+#upload-files { display: none; }
+.upload-go-btn {
+  display: block; width: 100%; padding: 13px;
+  background: #1a3a2a; border: 1px solid #2a5a3a; border-radius: 8px;
+  color: #5dba7e; font-size: 15px; text-align: center; cursor: pointer;
+  outline: none; -webkit-tap-highlight-color: transparent;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  -webkit-transition: background .15s; transition: background .15s;
+}
+.upload-go-btn:disabled { opacity: 0.4; }
+.upload-status {
+  margin-top: 12px; font-size: 13px; color: #666; min-height: 20px; text-align: center;
+}
+.upload-status.ok  { color: #5dba7e; }
+.upload-status.err { color: #c0392b; }
+.upload-gps-hint {
+  font-size: 11px; line-height: 1.5; color: #4a4a4a;
+  margin: -4px 0 14px;
+}
+/* ===== SLIDESHOW ===== */
+#screen-slideshow {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: #000; display: none;
+}
+.photo {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  background-position: center center; background-repeat: no-repeat;
+  background-size: contain; opacity: 0;
+  -webkit-transition: opacity 1.5s ease-in-out, -webkit-transform 1.8s ease-in-out;
+  transition: opacity 1.5s ease-in-out, transform 1.8s ease-in-out;
+}
+.photo.fade-start      { -webkit-transform: scale(1);       transform: scale(1); }
+.photo.fade-end        { -webkit-transform: scale(1);       transform: scale(1); }
+.photo.zoomin-start    { -webkit-transform: scale(1.0);     transform: scale(1.0); }
+.photo.zoomin-end      { -webkit-transform: scale(1.12);    transform: scale(1.12); }
+.photo.zoomout-start   { -webkit-transform: scale(1.12);    transform: scale(1.12); }
+.photo.zoomout-end     { -webkit-transform: scale(1.0);     transform: scale(1.0); }
+.photo.slideleft-start { -webkit-transform: translateX(4%); transform: translateX(4%); }
+.photo.slideleft-end   { -webkit-transform: translateX(0);  transform: translateX(0); }
+.photo.slideup-start   { -webkit-transform: translateY(4%); transform: translateY(4%); }
+.photo.slideup-end     { -webkit-transform: translateY(0);  transform: translateY(0); }
+.photo.visible { opacity: 1; }
+#photo-counter {
+  position: absolute; top: 14px; right: 18px; z-index: 90;
+  color: rgba(255,255,255,0.32); font-size: 13px; letter-spacing: 1px;
+  pointer-events: none; text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+}
+#overlay {
+  position: absolute; bottom: 18px; left: 18px; right: 18px;
+  z-index: 90; pointer-events: none;
+}
+#overlay-date {
+  font-size: 26px; font-weight: 300; line-height: 1.1; letter-spacing: 1px;
+  color: rgba(255,255,255,0.80); margin-bottom: 5px;
+  text-shadow: 0 2px 10px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.8);
+}
+#overlay-location {
+  font-size: 36px; font-weight: 200; line-height: 1.1;
+  color: rgba(255,255,255,0.93);
+  text-shadow: 0 2px 10px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.8);
+}
+/* ===== WEATHER SLIDE ===== */
+/* Fluidná typografia (clamp + vw): škáluje sa s veľkosťou obrazovky,
+   aby bola obrazovka čitateľná aj z druhého konca miestnosti. */
+#weather-slide {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 80;
+  background:
+    radial-gradient(ellipse at 50% 26%, #1c2c4a 0%, #0a1120 55%, #05070e 100%);
+  display: none; -webkit-flex-direction: column; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  padding: 4vh 4vw; -webkit-box-sizing: border-box; box-sizing: border-box;
+  opacity: 0; -webkit-transition: opacity 1s ease-in-out; transition: opacity 1s ease-in-out;
+}
+#weather-slide.visible { display: -webkit-flex; display: flex; opacity: 1; }
+/* — Hero: veľká ikona + obrovská teplota vedľa seba —
+   Pozn.: pred každým clamp()/min() je px fallback pre staré Safari
+   (napr. iPad Safari 9–12), ktoré clamp()/min() nepodporujú a inak by
+   celý riadok zahodili → text spadne na default a rozbije sa layout. */
+.weather-hero {
+  display: -webkit-flex; display: flex; -webkit-align-items: center; align-items: center;
+  -webkit-justify-content: center; justify-content: center;
+  gap: 28px;
+  gap: clamp(12px, 2.5vw, 40px);
+}
+.weather-icon {
+  font-size: 130px;
+  font-size: clamp(78px, 12vw, 168px); line-height: 1;
+  filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
+  -webkit-filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
+}
+.weather-main { text-align: left; }
+.weather-temp {
+  font-size: 160px;
+  font-size: clamp(92px, 16vw, 220px); font-weight: 200; letter-spacing: -0.03em;
+  color: #fff; line-height: 0.9;
+  text-shadow: 0 3px 30px rgba(0,0,0,0.5);
+}
+.weather-cond {
+  font-size: 30px;
+  font-size: clamp(20px, 3vw, 44px); font-weight: 300; letter-spacing: 0.01em;
+  color: rgba(255,255,255,0.82);
+  margin-top: 10px; margin-top: clamp(4px, 0.8vw, 14px);
+}
+/* — Max/Min dnešného dňa — */
+.weather-range {
+  margin-top: 30px; margin-top: clamp(18px, 3.2vh, 44px);
+  font-size: 18px; font-size: clamp(15px, 1.7vw, 24px);
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: rgba(255,255,255,0.5);
+}
+.weather-range .val {
+  color: #fff;
+  font-size: 24px; font-size: clamp(19px, 2.2vw, 32px);
+  text-transform: none; letter-spacing: 0;
+  margin-left: 8px; margin-left: clamp(6px, 0.7vw, 12px);
+  margin-right: 22px;  /* medzera pred ďalším popiskom aj bez flex `gap` (staré Safari) */
+}
+/* — Hodinová predpoveď: menej, ale veľkých kariet, čitateľných zďaleka — */
+.weather-hourly {
+  margin-top: 44px; margin-top: clamp(26px, 4.5vh, 70px);
+  display: -webkit-flex; display: flex; -webkit-flex-wrap: nowrap; flex-wrap: nowrap;
+  gap: 14px; gap: clamp(8px, 1.2vw, 20px);
+  width: 100%; max-width: 1500px; -webkit-justify-content: center; justify-content: center;
+}
+.weather-hour {
+  display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column;
+  -webkit-align-items: center; align-items: center; -webkit-flex: 1 1 0%; flex: 1 1 0%;
+  min-width: 0; max-width: 220px;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  padding: 20px 10px 18px;
+  padding: clamp(14px, 1.8vh, 26px) clamp(4px, 1vw, 16px) clamp(13px, 1.7vh, 24px);
+  border-radius: 18px; border-radius: clamp(16px, 1.8vw, 26px);
+  background: rgba(255,255,255,0.055); border: 1px solid rgba(255,255,255,0.07);
+}
+.weather-hour.now {
+  background: rgba(120,170,255,0.16); border-color: rgba(140,185,255,0.4);
+}
+.weather-hour .wh-time {
+  font-size: 19px; font-size: clamp(15px, 1.9vw, 27px);
+  letter-spacing: 0.03em; font-weight: 300;
+  color: rgba(255,255,255,0.72);
+}
+.weather-hour.now .wh-time { color: #cfe0ff; }
+.weather-hour .wh-ico  {
+  font-size: 44px; font-size: clamp(34px, 4.6vw, 68px); line-height: 1;
+  margin: 12px 0 10px; margin: clamp(9px, 1.3vh, 18px) 0 clamp(8px, 1.1vh, 16px);
+}
+.weather-hour .wh-temp {
+  font-size: 26px; font-size: clamp(23px, 3.2vw, 46px);
+  font-weight: 400; color: #fff; line-height: 1;
+}
+.weather-date {
+  position: absolute; bottom: 28px; bottom: clamp(20px, 3.5vh, 44px);
+  left: 0; right: 0; text-align: center;
+  font-size: 15px; font-size: clamp(13px, 1.4vw, 20px);
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: rgba(255,255,255,0.32);
+}
+/* — Portrét (tablet/telefón na výšku): hero na stred, hodiny ako riadky zhora dole — */
+@media (orientation: portrait) {
+  #weather-slide {
+    -webkit-justify-content: center; justify-content: center;
+    padding: 3vh 5vw;
+  }
+  .weather-hero {
+    -webkit-flex-direction: column; flex-direction: column;
+    gap: 6px; gap: clamp(2px, 0.6vh, 8px);
+  }
+  .weather-main { text-align: center; }
+  .weather-temp { font-size: 150px; font-size: clamp(80px, 21vw, 190px); }
+  .weather-icon { font-size: 120px; font-size: clamp(74px, 17vw, 150px); }
+  .weather-cond {
+    font-size: 30px; font-size: clamp(21px, 4.6vw, 36px);
+    margin-top: 6px; margin-top: clamp(2px, 0.5vh, 8px);
+  }
+  .weather-range {
+    margin-top: 20px; margin-top: clamp(10px, 1.8vh, 26px);
+    font-size: 20px; font-size: clamp(15px, 3.3vw, 24px);
+  }
+  .weather-range .val { font-size: 24px; font-size: clamp(19px, 4.2vw, 28px); }
+  /* Hodiny ako riadky zhora dole. Zámerne NIE flexbox ani gap/clamp/min pre
+     štruktúru – starý iPad Safari (9–13) má buggy flexbox a nepozná gap/clamp/min.
+     display:table + table-cell funguje spoľahlivo aj na prastarom Safari. */
+  .weather-hourly {
+    display: block;
+    width: 360px; width: min(92%, 360px);
+    max-width: 92%;
+    margin-left: auto; margin-right: auto;
+    margin-top: 28px; margin-top: clamp(14px, 2.6vh, 36px);
+  }
+  .weather-hour {
+    display: table; table-layout: fixed; width: 100%;
+    -webkit-flex: 0 1 auto; flex: 0 1 auto; max-width: none;
+    margin: 0 auto 10px; margin-bottom: clamp(7px, 1vh, 13px);
+    padding: 14px 22px;
+    padding: clamp(8px, 1.3vh, 18px) clamp(16px, 5vw, 24px);
+  }
+  .weather-hour .wh-time {
+    display: table-cell; vertical-align: middle; text-align: left; width: 32%;
+    font-size: 28px; font-size: clamp(21px, 5.4vw, 34px);
+  }
+  .weather-hour .wh-ico {
+    display: table-cell; vertical-align: middle; text-align: center; margin: 0;
+    font-size: 44px; font-size: clamp(32px, 7.6vw, 52px);
+  }
+  .weather-hour .wh-temp {
+    display: table-cell; vertical-align: middle; text-align: right; width: 32%;
+    font-size: 36px; font-size: clamp(26px, 6.6vw, 44px);
+  }
+  /* dátum do toku, nech neprekrýva riadky na vysokom obsahu */
+  .weather-date {
+    position: static;
+    margin-top: 24px; margin-top: clamp(16px, 3vh, 34px); bottom: auto;
+  }
+}
+/* ===== ODPAD: štítok v rohu fotky ===== */
+/* Rovnaký princíp ako weather slide: vždy px fallback pred clamp(),
+   žiadny flex `gap` – starý iPad Safari (9–13) ich nepozná. */
+#waste-badge {
+  position: absolute; top: 16px; left: 18px; z-index: 95;
+  display: none; max-width: 62%;
+  background: rgba(8,10,14,0.62);
+  border-radius: 14px; border-radius: clamp(12px, 1.2vw, 18px);
+  border-left: 6px solid #9aa5b1;
+  padding: 12px 18px 12px 14px;
+  padding: clamp(9px, 1.4vh, 18px) clamp(13px, 1.5vw, 24px) clamp(9px, 1.4vh, 18px) clamp(10px, 1.1vw, 18px);
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+  pointer-events: none;
+}
+#waste-badge.visible { display: block; }
+.wb-row { display: table; width: 100%; }
+.wb-ico {
+  display: table-cell; vertical-align: middle; padding-right: 12px;
+  font-size: 38px; font-size: clamp(30px, 3.4vw, 54px); line-height: 1;
+}
+.wb-text { display: table-cell; vertical-align: middle; text-align: left; }
+.wb-when {
+  font-size: 13px; font-size: clamp(11px, 1.1vw, 17px);
+  letter-spacing: 0.18em; text-transform: uppercase;
+  color: rgba(255,255,255,0.55); margin-bottom: 3px;
+}
+.wb-what {
+  font-size: 26px; font-size: clamp(20px, 2.2vw, 36px);
+  font-weight: 300; color: #fff; line-height: 1.15;
+}
+/* ===== ODPAD: celoobrazovkový slide ===== */
+#waste-slide {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 82;
+  background:
+    radial-gradient(ellipse at 50% 28%, #1d3324 0%, #0c1712 55%, #05080b 100%);
+  display: none; -webkit-flex-direction: column; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  padding: 4vh 5vw; -webkit-box-sizing: border-box; box-sizing: border-box;
+  opacity: 0; -webkit-transition: opacity 1s ease-in-out; transition: opacity 1s ease-in-out;
+}
+#waste-slide.visible { display: block; display: -webkit-flex; display: flex; opacity: 1; }
+.waste-when {
+  font-size: 24px; font-size: clamp(18px, 2.4vw, 38px);
+  letter-spacing: 0.26em; text-transform: uppercase;
+  color: rgba(255,255,255,0.55);
+  margin-bottom: 18px; margin-bottom: clamp(10px, 2vh, 30px);
+}
+.waste-icons {
+  font-size: 110px; font-size: clamp(70px, 13vw, 168px); line-height: 1.05;
+  filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
+  -webkit-filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
+}
+.waste-names {
+  font-size: 58px; font-size: clamp(34px, 6.4vw, 96px);
+  font-weight: 200; letter-spacing: -0.01em; color: #fff; line-height: 1.1;
+  margin-top: 16px; margin-top: clamp(8px, 1.8vh, 26px);
+  text-shadow: 0 3px 30px rgba(0,0,0,0.5);
+}
+.waste-names .wn-sep { color: rgba(255,255,255,0.32); }
+.waste-accent {
+  width: 120px; width: clamp(80px, 11vw, 190px);
+  height: 6px; height: clamp(4px, 0.6vh, 9px);
+  border-radius: 4px; background: #7cb342;
+  margin: 26px auto 0; margin-top: clamp(16px, 2.6vh, 36px);
+}
+.waste-hint {
+  font-size: 22px; font-size: clamp(16px, 2vw, 32px); font-weight: 300;
+  color: rgba(255,255,255,0.7);
+  margin-top: 26px; margin-top: clamp(15px, 2.6vh, 38px);
+  max-width: 900px;
+}
+.waste-date {
+  position: absolute; bottom: 28px; bottom: clamp(20px, 3.5vh, 44px);
+  left: 0; right: 0; text-align: center;
+  font-size: 15px; font-size: clamp(13px, 1.4vw, 20px);
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: rgba(255,255,255,0.32);
+}
+@media (orientation: portrait) {
+  .waste-names { font-size: 46px; font-size: clamp(30px, 9vw, 62px); }
+  .waste-icons { font-size: 96px; font-size: clamp(64px, 20vw, 130px); }
+  .waste-when  { font-size: 20px; font-size: clamp(15px, 4vw, 26px); }
+  .waste-hint  { font-size: 20px; font-size: clamp(15px, 4vw, 26px); }
+  .waste-date  { position: static; margin-top: 26px; }
+}
+/* ===== ODPAD: import harmonogramu ===== */
+.wimp-intro { font-size: 12px; line-height: 1.55; color: #6a6a6a; margin-bottom: 12px; }
+.wimp-hint  { font-size: 11px; line-height: 1.55; color: #4a4a4a; margin: 8px 0 12px; }
+#waste-import-file { display: none; }
+.wimp-serie {
+  display: table; width: 100%; background: #151515; border: 1px solid #232323;
+  border-radius: 11px; padding: 12px 13px; margin-bottom: 8px;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.wimp-serie.on { border-color: #4a7fd6; background: #171e2b; }
+.wimp-serie .ws-sw {
+  display: table-cell; vertical-align: middle; width: 34px;
+}
+.wimp-serie .ws-chip {
+  width: 22px; height: 22px; border-radius: 6px;
+  border: 3px solid transparent; -webkit-box-sizing: border-box; box-sizing: border-box;
+}
+.wimp-serie .ws-txt { display: table-cell; vertical-align: middle; padding-right: 8px; }
+.wimp-serie .ws-name { color: #e8e8e8; font-size: 14px; margin-bottom: 2px; }
+.wimp-serie .ws-sub  { color: #6b6b6b; font-size: 11.5px; line-height: 1.45; }
+.wimp-serie .ws-box  {
+  display: table-cell; vertical-align: middle; width: 24px;
+  text-align: right; color: #3a3a3a; font-size: 17px;
+}
+.wimp-serie.on .ws-box { color: #5b9bf8; }
+.wimp-type {
+  /* prisadnutý k svojmu radu, aby bolo jasné, ku ktorému riadku patrí */
+  width: 92%; margin: -4px 0 10px auto; display: block;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  background: #1b1b1b; border: 1px solid #2a2a2a; border-radius: 8px;
+  color: #ddd; font-size: 13px; padding: 8px 10px; outline: none;
+}
+/* ===== ODPAD: editor kalendára ===== */
+#waste-dialog {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 400; background: #0c0c0c; display: none;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 26px 18px 40px; -webkit-box-sizing: border-box; box-sizing: border-box;
+}
+.wd-inner { max-width: 560px; margin: 0 auto; text-align: left; }
+.wd-title {
+  font-size: 13px; letter-spacing: 2.5px; text-transform: uppercase;
+  color: #777; margin-bottom: 22px; text-align: center;
+}
+.wd-group { margin-bottom: 22px; }
+.wd-label {
+  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: #555; margin-bottom: 9px;
+}
+.wd-hint { font-size: 11px; line-height: 1.5; color: #4a4a4a; margin-top: 6px; }
+.wd-seg { display: block; width: 100%; font-size: 0; }
+.wd-seg .wd-opt {
+  display: inline-block; -webkit-box-sizing: border-box; box-sizing: border-box;
+  background: #171717; border: 1.5px solid #272727; border-radius: 10px;
+  padding: 11px 6px; text-align: center; color: #8b8b8b; font-size: 14px;
+  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
+  margin: 0 2% 8px 0; vertical-align: top;
+  -webkit-transition: border-color .15s, background .15s, color .15s;
+  transition: border-color .15s, background .15s, color .15s;
+}
+/* Šírky sú zámerne pod matematickým maximom: každá dlaždica má margin-right,
+   takže riadok musí vyjsť aj bez spoliehania sa na :last-child – inak by pri
+   10 druhoch odpadu vyšli riadky raz po 3 a raz po 4 kusoch. */
+.wd-seg.cols2 .wd-opt { width: 47.8%; }
+.wd-seg.cols3 .wd-opt { width: 31%; }
+.wd-seg.cols4 .wd-opt { width: 22.7%; }
+.wd-seg.cols7 .wd-opt { width: 12.1%; padding: 11px 2px; font-size: 13px; }
+.wd-seg .wd-opt.active { border-color: #4a7fd6; background: #1a2333; color: #dce6fb; }
+.wd-input, .wd-select {
+  width: 100%; -webkit-box-sizing: border-box; box-sizing: border-box;
+  background: #171717; border: 1px solid #272727; border-radius: 9px;
+  color: #ddd; font-size: 15px; padding: 11px 12px; outline: none;
+  -webkit-appearance: none; appearance: none;
+  font-family: -apple-system, Helvetica, Arial, sans-serif;
+}
+.wd-select { -webkit-appearance: menulist; appearance: menulist; }
+.wd-stepper { display: table; width: 100%; }
+.wd-stepper .wd-step-btn {
+  display: table-cell; width: 54px; text-align: center; vertical-align: middle;
+  background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 9px;
+  color: #bbb; font-size: 22px; line-height: 1; padding: 10px 0;
+  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none; user-select: none;
+}
+.wd-stepper .wd-step-val {
+  display: table-cell; text-align: center; vertical-align: middle;
+  color: #fff; font-size: 19px; font-weight: 300;
+}
+.wd-check {
+  display: table; width: 100%; background: #171717; border: 1px solid #262626;
+  border-radius: 10px; padding: 12px 14px; -webkit-box-sizing: border-box;
+  box-sizing: border-box; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.wd-check .wc-txt { display: table-cell; vertical-align: middle; color: #bbb; font-size: 14px; }
+.wd-check .wc-box {
+  display: table-cell; vertical-align: middle; width: 26px; text-align: right;
+  color: #3a3a3a; font-size: 18px;
+}
+.wd-check.on .wc-box { color: #5b9bf8; }
+.wd-check.on .wc-txt { color: #e6e6e6; }
+.wd-rule {
+  display: table; width: 100%; background: #151515; border: 1px solid #232323;
+  border-left-width: 5px; border-radius: 11px; padding: 13px 14px; margin-bottom: 9px;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.wd-rule .wr-ico { display: table-cell; vertical-align: middle; width: 40px; font-size: 25px; }
+.wd-rule .wr-txt { display: table-cell; vertical-align: middle; }
+.wd-rule .wr-name { color: #eee; font-size: 15px; margin-bottom: 2px; }
+.wd-rule .wr-sub  { color: #6b6b6b; font-size: 12px; line-height: 1.4; }
+.wd-rule .wr-go   { display: table-cell; vertical-align: middle; width: 22px;
+                    text-align: right; color: #444; font-size: 17px; }
+.wd-empty { color: #4a4a4a; font-size: 13px; padding: 14px 2px; }
+.wd-btn {
+  display: block; width: 100%; -webkit-box-sizing: border-box; box-sizing: border-box;
+  padding: 13px; border-radius: 10px; font-size: 15px; text-align: center;
+  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
+  border: 1px solid #2c2c2c; background: #202020; color: #ccc; margin-bottom: 9px;
+}
+.wd-btn.primary { background: #24457c; border-color: #2f5da8; color: #eaf1ff; }
+.wd-btn.danger  { background: #2a1616; border-color: #4a2020; color: #d98a8a; }
+.wd-btn.ghost   { background: transparent; border-color: #262626; color: #777; }
+.wd-status { font-size: 13px; text-align: center; min-height: 18px; margin-bottom: 8px; color: #888; }
+.wd-status.ok  { color: #4caf50; }
+.wd-status.err { color: #d9534f; }
+.wd-chips { font-size: 0; }
+.wd-chip {
+  display: inline-block; background: #1b1b1b; border: 1px solid #2a2a2a;
+  border-radius: 20px; padding: 7px 12px; margin: 0 6px 6px 0;
+  color: #bbb; font-size: 13px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.wd-chip .wc-x { color: #666; margin-left: 7px; }
+.wd-chip.month.on { background: #1a2333; border-color: #4a7fd6; color: #dce6fb; }
+.wd-daterow { display: table; width: 100%; }
+.wd-daterow .wd-dcell { display: table-cell; vertical-align: middle; }
+.wd-daterow .wd-dbtn  {
+  display: table-cell; vertical-align: middle; width: 90px; padding-left: 8px;
+}
+.wd-preview-day {
+  display: table; width: 100%; padding: 9px 0; border-bottom: 1px solid #1c1c1c;
+}
+.wd-preview-day .wp-date { display: table-cell; vertical-align: middle; width: 45%;
+                           color: #9a9a9a; font-size: 13px; }
+.wd-preview-day .wp-types { display: table-cell; vertical-align: middle;
+                            color: #ddd; font-size: 13px; text-align: right; }
+/* ===== SETTINGS ===== */
+.settings-btn {
+  position: absolute; top: 18px; right: 18px; z-index: 60;
+  width: 38px; height: 38px; border-radius: 50%;
+  background: rgba(255,255,255,0.04); border: 1px solid #222;
+  color: #555; font-size: 17px; cursor: pointer; outline: none;
+  display: -webkit-flex; display: flex; align-items: center; justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-transition: background .15s, color .15s, border-color .15s;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.settings-btn:active { background: rgba(255,255,255,0.09); color: #999; }
+#settings-dialog {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 300; background: rgba(0,0,0,0.72); display: none;
+}
+.settings-box {
+  position: absolute; top: 50%; left: 50%;
+  -webkit-transform: translate(-50%, -50%); transform: translate(-50%, -50%);
+  background: #161616; border: 1px solid #262626; border-radius: 16px;
+  padding: 26px 24px 22px; text-align: left; width: 86%; max-width: 380px;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+}
+.settings-title {
+  font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+  color: #666; margin-bottom: 20px; text-align: center;
+}
+.settings-group { margin-bottom: 22px; }
+.settings-group:last-of-type { margin-bottom: 26px; }
+.settings-label {
+  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: #555; margin-bottom: 10px;
+}
+.theme-options { display: -webkit-flex; display: flex; gap: 10px; }
+.theme-opt {
+  -webkit-flex: 1; flex: 1; background: #1c1c1c; border: 1.5px solid #292929;
+  border-radius: 12px; padding: 14px 10px 12px; text-align: center;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  -webkit-transition: border-color .15s, background .15s; transition: border-color .15s, background .15s;
+}
+.theme-opt.active { border-color: #4a7fd6; background: #1a2333; }
+.theme-preview {
+  width: 100%; height: 46px; border-radius: 7px; margin-bottom: 8px;
+  position: relative; overflow: hidden; background: #050505;
+}
+.theme-preview.stars-preview {
+  background: radial-gradient(ellipse at 50% 20%, #10162a 0%, #050608 70%);
+}
+.theme-preview .tp-dot {
+  position: absolute; border-radius: 50%; background: #fff;
+}
+.theme-opt-label { font-size: 12px; color: #999; }
+.theme-opt.active .theme-opt-label { color: #dce6fb; }
+.settings-close {
+  display: block; width: 100%; padding: 12px;
+  background: #202020; border: 1px solid #2c2c2c; border-radius: 9px;
+  color: #ccc; font-size: 15px; text-align: center; cursor: pointer;
+  outline: none; -webkit-tap-highlight-color: transparent;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+}
+/* ===== SLEEP ===== */
+#screen-sleep {
+  display: none; position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: #000; z-index: 500; overflow: hidden;
+}
+#screen-sleep.theme-black { background: #000; }
+#screen-sleep.theme-stars {
+  background: radial-gradient(ellipse at 50% 15%, #0b1224 0%, #04050a 60%, #020204 100%);
+}
+#starfield-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+.sf-star { fill: #fff; }
+.sf-star.twinkle { -webkit-animation: sfTwinkle linear infinite; animation: sfTwinkle linear infinite; }
+@-webkit-keyframes sfTwinkle {
+  0%, 100% { opacity: var(--sf-min, 0.25); }
+  50%      { opacity: var(--sf-max, 1); }
+}
+@keyframes sfTwinkle {
+  0%, 100% { opacity: var(--sf-min, 0.25); }
+  50%      { opacity: var(--sf-max, 1); }
+}
+.sf-meteor {
+  position: absolute; width: 2px; height: 2px; border-radius: 50%;
+  background: #fff; opacity: 0;
+  -webkit-animation: sfMeteor 3.2s ease-in forwards;
+  animation: sfMeteor 3.2s ease-in forwards;
+}
+.sf-meteor::before {
+  content: ""; position: absolute; top: 1px; right: 1px;
+  width: 90px; height: 1.5px; border-radius: 2px;
+  background: linear-gradient(to left, rgba(255,255,255,0.9), rgba(255,255,255,0));
+  -webkit-transform-origin: right center; transform-origin: right center;
+  -webkit-transform: rotate(215deg); transform: rotate(215deg);
+}
+@-webkit-keyframes sfMeteor {
+  0%   { opacity: 0; -webkit-transform: translate(0,0); transform: translate(0,0); }
+  8%   { opacity: 1; }
+  75%  { opacity: 1; }
+  100% { opacity: 0; -webkit-transform: translate(-260px, 190px); transform: translate(-260px, 190px); }
+}
+@keyframes sfMeteor {
+  0%   { opacity: 0; transform: translate(0,0); }
+  8%   { opacity: 1; }
+  75%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-260px, 190px); }
+}
+/* ===== DELETE DIALOG ===== */
+#delete-dialog {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 200; background: rgba(0,0,0,0.68); display: none;
+}
+.del-box {
+  position: absolute; top: 50%; left: 50%;
+  -webkit-transform: translate(-50%, -50%); transform: translate(-50%, -50%);
+  background: #1c1c1e; border-radius: 14px;
+  padding: 30px 26px 24px; text-align: center; min-width: 270px; max-width: 340px;
+}
+.del-title { font-size: 17px; color: #fff; margin-bottom: 8px; }
+.del-sub   { font-size: 13px; color: #888; margin-bottom: 26px; }
+.del-yes {
+  background: #c0392b; color: #fff; border: none; border-radius: 9px;
+  padding: 12px 28px; font-size: 16px; margin-right: 10px;
+  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
+}
+.del-no {
+  background: #2c2c2e; color: #ccc; border: none; border-radius: 9px;
+  padding: 12px 28px; font-size: 16px;
+  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
+}
+#ss-msg {
+  position: absolute; top: 50%; left: 0; right: 0; text-align: center;
+  color: #444; font-size: 17px;
+  -webkit-transform: translateY(-50%); transform: translateY(-50%); display: none;
+}
