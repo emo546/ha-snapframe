@@ -1,0 +1,90 @@
+configuration:
+  smb_server:
+    name: "SMB server"
+    description: "IP adresa alebo názov počítača, ktorý zdieľa fotky."
+  smb_share:
+    name: "Názov zdieľania"
+    description: "Názov zdieľaného priečinka, bez lomítok."
+  smb_version:
+    name: "Verzia protokolu SMB"
+    description: "Nechaj 3.0. Staršie NAS a Windows zdieľania môžu potrebovať 2.1 alebo 1.0."
+  smb_username:
+    name: "Používateľ"
+    description: "Používateľ s právom čítať a zapisovať do zdieľania."
+  smb_password:
+    name: "Heslo"
+    description: "Heslo k tomuto používateľovi."
+  watch_folder:
+    name: "Sledovaný priečinok"
+    description: "Kam prichádzajú nové fotky. HEIC/HEIF sa odtiaľto konvertujú."
+  output_folder:
+    name: "Knižnica fotiek"
+    description: "Priečinok, ktorý rám zobrazuje. Podpriečinky sú albumy."
+  delete_original:
+    name: "Zmazať pôvodný HEIC"
+    description: "Po konverzii do JPG zmazať pôvodný HEIC súbor."
+  jpg_quality:
+    name: "Kvalita JPG"
+    description: "Kvalita skonvertovaných fotiek, 1–100."
+  thumb_quality:
+    name: "Kvalita náhľadov"
+    description: "Kvalita obrázkov, ktoré rám zobrazuje, 1–100."
+  thumb_max_px:
+    name: "Veľkosť náhľadov"
+    description: "Dlhšia strana v pixeloch. Na Retina displejoch si rám vypýta aj väčšie varianty."
+  thumb_cache:
+    name: "Kam ukladať náhľady"
+    description: "addon = na disk Home Assistanta (rýchlejšie); share = k fotkám na zdieľanie (šetrí miesto v HA)."
+  scan_interval_hours:
+    name: "Interval skenovania (hodiny)"
+    description: "Ako často hľadať nové HEIC súbory. Skenovať sa dá kedykoľvek aj z appky."
+  slideshow_seconds:
+    name: "Sekúnd na fotku"
+    description: "Ako dlho zostane každá fotka na obrazovke."
+  web_port:
+    name: "Webový port"
+    description: "Port, na ktorý sa pripájajú tablety."
+  basic_auth_user:
+    name: "Používateľ pre Basic Auth"
+    description: "Nepovinné. Vyplň obe polia a celý rám bude chránený heslom."
+  basic_auth_password:
+    name: "Heslo pre Basic Auth"
+    description: "Nepovinné. Heslo k používateľovi vyššie."
+  language:
+    name: "Jazyk"
+    description: "Jazyk rozhrania rámu: sk, en alebo de."
+  sleep_start:
+    name: "Začiatok nočného režimu"
+    description: "Napríklad 23:00. Prázdne = obrazovka sa nikdy nezatemní."
+  sleep_end:
+    name: "Koniec nočného režimu"
+    description: "Napríklad 07:00."
+  weather_photo_interval:
+    name: "Fotiek medzi obrazovkami počasia"
+    description: "Koľko fotiek sa ukáže, kým sa počasie zobrazí znova."
+  weather_mode_duration_minutes:
+    name: "Trvanie weather mode (minúty)"
+    description: "Ako dlho zostane weather mode zapnutý po spustení pohybovým senzorom."
+  anthropic_api_key:
+    name: "API kľúč Claude (nepovinné)"
+    description: "Použije sa len vtedy, keď sa harmonogram nepodarí prečítať lokálne. Je to jediná funkcia, ktorá posiela dáta mimo tvoju sieť."
+  api_token:
+    name: "API token (nepovinné)"
+    description: "Keď je vyplnený, nahrávanie, mazanie a zmena kalendára vyžadujú token. Prezeranie zostáva otvorené, aby rám nepotreboval prihlásenie."
+  mqtt_enabled:
+    name: "Publikovať cez MQTT"
+    description: "Vytvoriť senzory v Home Assistante automaticky cez MQTT discovery."
+  mqtt_host:
+    name: "MQTT broker"
+    description: "Prázdne = použije sa Mosquitto add-on nastavený v Home Assistante."
+  mqtt_port:
+    name: "MQTT port"
+    description: "Zvyčajne 1883."
+  mqtt_username:
+    name: "MQTT používateľ"
+    description: "Treba len pri ručne zadanom brokeri."
+  mqtt_password:
+    name: "MQTT heslo"
+    description: "Treba len pri ručne zadanom brokeri."
+network:
+  8099/tcp: "Webové rozhranie – Port, ktorý tablety otvárajú, aby videli slideshow."

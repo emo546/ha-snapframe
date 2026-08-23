@@ -13,6 +13,7 @@ Novinky v2.10: kalendár vývozu odpadu – termíny zvozov sa nastavia priamo v
               buď štítok v rohu, alebo celoobrazovkový slide medzi fotkami
 """
 
+import hmac
 import os
 import re
 import json as json_module
@@ -56,11 +57,55 @@ SLEEP_END       = _env_str("SLEEP_END",   "")         # "07:00" alebo ""
 WEATHER_PHOTO_INTERVAL   = _env_int("WEATHER_PHOTO_INTERVAL", 8)      # fotiek medzi weather slidmi
 WEATHER_MODE_DURATION_MIN = _env_int("WEATHER_MODE_DURATION_MIN", 120)  # min trvania po /weather-mode/on
 ANTHROPIC_API_KEY = _env_str("ANTHROPIC_API_KEY")   # nepovinné – záloha pre skeny/fotky harmonogramu
+API_TOKEN         = _env_str("API_TOKEN")           # nepovinný – chráni zápisové endpointy
 
 GEOCACHE_FILE = "/data/geocode_cache.json"
 ALLOWED_EXT   = (".jpg", ".jpeg", ".png")
+HIDDEN_DIRS   = {"_kos", "_thumbs"}
+PHOTO_MAX_AGE = 24 * 3600      # fotky/thumbnaily sa nemenia pod tým istým menom
 
-app = Flask(__name__)
+# Thumbnaily patria k add-onu, nie do knižnice používateľa: na SMB share sa
+# čítajú aj zapisujú cez sieť a špinia priečinok s fotkami. Kto má knižnicu
+# väčšiu než voľné miesto na HA (SD karta), prepne thumb_cache na "share".
+THUMB_CACHE  = _env_str("THUMB_CACHE", "addon")        # addon | share
+THUMB_DIR    = _env_str("THUMB_DIR", "/data/thumbs")
+# Ponuka veľkostí: rám si vypýta tú, ktorá sedí jeho displeju (Retina iPad
+# potrebuje viac než 1024 px, inak je fotka na celú obrazovku mäkká).
+THUMB_SIZES  = (512, 1024, 1600, 2048)
+
+# HTML/CSS/JS rámu sú súbory, nie reťazce v tomto module – dajú sa lintovať
+# a prehliadač na tablete si CSS/JS nakešuje (viď ASSET_VERSION nižšie).
+ASSET_DIR = Path(os.environ.get("SNAPFRAME_ASSET_DIR", "/usr/share/snapframe"))
+
+app = Flask(__name__,
+            static_folder=str(ASSET_DIR / "static"),
+            static_url_path="/static")
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 30 * 24 * 3600   # ?v=… rieši invalidáciu
+
+
+def _asset_version() -> str:
+    """Najnovší mtime assetov – mení ?v= po každom update add-onu."""
+    try:
+        newest = max(f.stat().st_mtime for f in ASSET_DIR.rglob("*") if f.is_file())
+        return str(int(newest))
+    except (OSError, ValueError):
+        return "0"
+
+
+ASSET_VERSION = _asset_version()
+_index_cache = {"mtime": None, "html": ""}
+
+
+def _read_index_html() -> str:
+    path = ASSET_DIR / "index.html"
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return "<h1>SnapFrame</h1><p>index.html chýba v {}</p>".format(ASSET_DIR)
+    if _index_cache["mtime"] != mtime:
+        _index_cache["html"]  = path.read_text(encoding="utf-8")
+        _index_cache["mtime"] = mtime
+    return _index_cache["html"]
 
 # ── Zdieľaný stav ─────────────────────────────────────────────────────────────
 try:
@@ -68,6 +113,12 @@ try:
     _has_state = True
 except ImportError:
     _has_state = False
+
+try:
+    import photoindex as _index
+    _has_index = True
+except ImportError:               # pragma: no cover
+    _has_index = False
 
 try:
     import waste_import as _waste_import
@@ -113,6 +164,8 @@ TRANSLATIONS = {
         "app_title":            "Fotorámik",
         "app_subtitle":         "FOTO RÁMIK",
         "scan_btn":             "\u21bb Skenuj teraz",
+        "token_prompt":         "Zadaj API token SnapFrame (add-on \u2192 api_token):",
+        "conn_lost":            "Bez spojenia so serverom \u2013 sk\u00fa\u0161am znova\u2026",
         "scan_started":         "\u2713 Spusten\u00e9",
         "order_label":          "Poradie fotiek",
         "order_date":           "Chronologicky",
@@ -230,6 +283,8 @@ TRANSLATIONS = {
         "app_title":            "SnapFrame",
         "app_subtitle":         "PHOTO FRAME",
         "scan_btn":             "\u21bb Scan now",
+        "token_prompt":         "Enter the SnapFrame API token (add-on \u2192 api_token):",
+        "conn_lost":            "No connection to the server \u2013 retrying\u2026",
         "scan_started":         "\u2713 Started",
         "order_label":          "Photo order",
         "order_date":           "Chronological",
@@ -347,6 +402,8 @@ TRANSLATIONS = {
         "app_title":            "SnapFrame",
         "app_subtitle":         "FOTO RAHMEN",
         "scan_btn":             "\u21bb Jetzt scannen",
+        "token_prompt":         "SnapFrame-API-Token eingeben (Add-on \u2192 api_token):",
+        "conn_lost":            "Keine Verbindung zum Server \u2013 neuer Versuch\u2026",
         "scan_started":         "\u2713 Gestartet",
         "order_label":          "Reihenfolge",
         "order_date":           "Chronologisch",
@@ -608,10 +665,9 @@ def _load_exif(path: Path):
         return cached
     result = {"date": None, "gps": None}
     try:
-        img  = Image.open(path)
-        exif = img.getexif()
-        if exif:
-            for tag_id, value in exif.items():
+        with Image.open(path) as img:
+            exif = img.getexif()
+            for tag_id, value in (exif or {}).items():
                 tag = TAGS.get(tag_id, tag_id)
                 if tag in ("DateTimeOriginal", "DateTime", "DateTimeDigitized"):
                     try:
@@ -619,7 +675,7 @@ def _load_exif(path: Path):
                         break
                     except ValueError:
                         pass
-            gps_ifd = exif.get_ifd(0x8825)
+            gps_ifd = exif.get_ifd(0x8825) if exif else None
             if gps_ifd:
                 lat_ref = gps_ifd.get(1); lat = gps_ifd.get(2)
                 lon_ref = gps_ifd.get(3); lon = gps_ifd.get(4)
@@ -641,6 +697,34 @@ def get_exif_date(path: Path):
 
 def get_gps_coords(path: Path):
     return _load_exif(path).get("gps")
+
+def _photo_meta(path: Path):
+    """EXIF fotky cez index v /data – bez neho by sa každá fotka musela pri
+    každom výpise otvoriť cez sieť. Vracia (dátum, gps, uložená lokalita)."""
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return (None, None, None)
+    rel = None
+    if _has_index:
+        try:
+            rel = str(path.resolve().relative_to(Path(OUTPUT_FOLDER).resolve()))
+        except ValueError:
+            rel = None
+    if rel is not None:
+        row = _index.get(rel, mtime)
+        if row is not None:
+            dt  = datetime.fromtimestamp(row["date_ts"]) if row["date_ts"] else None
+            gps = (row["lat"], row["lon"]) if row["lat"] is not None else None
+            return (dt, gps, row["location"])
+    exif = _load_exif(path)
+    dt, gps = exif.get("date"), exif.get("gps")
+    if rel is not None:
+        _index.put(rel, mtime,
+                   dt.timestamp() if dt else None,
+                   gps[0] if gps else None,
+                   gps[1] if gps else None)
+    return (dt, gps, None)
 
 def reverse_geocode(lat, lon, lang):
     key = (round(lat, 2), round(lon, 2), lang)
@@ -677,10 +761,9 @@ def list_albums():
     folder = Path(OUTPUT_FOLDER)
     if not folder.exists():
         return []
-    HIDDEN = {"_kos", "_thumbs"}
     result = []
     for d in sorted(folder.iterdir()):
-        if d.is_dir() and d.name not in HIDDEN:
+        if d.is_dir() and d.name not in HIDDEN_DIRS:
             count = sum(1 for f in d.iterdir()
                         if f.is_file() and f.suffix.lower() in ALLOWED_EXT)
             result.append({"name": d.name, "count": count})
@@ -690,6 +773,7 @@ def list_photos(album=""):
     folder = Path(OUTPUT_FOLDER)
     if not folder.exists():
         return []
+    album = safe_album(album)
     if album and album != "all":
         search = folder / album
         if not search.is_dir():
@@ -697,23 +781,57 @@ def list_photos(album=""):
         files = [f for f in search.iterdir()
                  if f.is_file() and f.suffix.lower() in ALLOWED_EXT]
     else:
-        HIDDEN = {"_kos", "_thumbs"}
         files  = [f for f in folder.rglob("*")
                   if f.is_file() and f.suffix.lower() in ALLOWED_EXT
-                  and not any(p in HIDDEN for p in f.relative_to(folder).parts)]
+                  and not any(p in HIDDEN_DIRS for p in f.relative_to(folder).parts)]
+    # Jeden dotaz do indexu namiesto otvárania každej fotky cez sieť.
+    known = _index.all_dates() if _has_index else {}
+    base  = Path(OUTPUT_FOLDER).resolve()
+
     def sort_key(f):
-        d = get_exif_date(f)
-        return d.timestamp() if d is not None else f.stat().st_mtime
+        try:
+            mtime = f.stat().st_mtime
+        except OSError:
+            return 0.0
+        row = known.get(str(f.resolve().relative_to(base))) if known else None
+        if row is not None and abs(row[0] - mtime) <= 0.001:
+            return row[1] if row[1] else mtime
+        d = _photo_meta(f)[0]        # doplní index pre novú/zmenenú fotku
+        return d.timestamp() if d is not None else mtime
+
     files.sort(key=sort_key)
     return [str(f.relative_to(folder)) for f in files]
 
 # ── Thumbnail helper ──────────────────────────────────────────────────────────
 
-def _get_or_create_thumb(filename: str):
-    src        = Path(OUTPUT_FOLDER) / filename
-    if not src.is_file():
+def _thumb_root() -> Path:
+    if THUMB_CACHE == "share":
+        return Path(OUTPUT_FOLDER) / "_thumbs"
+    return Path(THUMB_DIR)
+
+
+def _closest_size(requested) -> int:
+    """Zaokrúhli požadovanú šírku na najbližšiu väčšiu z ponuky – aby sa
+    z ľubovoľného rozlíšenia displeja nestal neobmedzený počet variantov."""
+    try:
+        want = int(requested)
+    except (TypeError, ValueError):
+        return THUMB_MAX_PX
+    for size in THUMB_SIZES:
+        if size >= want:
+            return size
+    return THUMB_SIZES[-1]
+
+
+def _get_or_create_thumb(filename: str, size=None):
+    """(priečinok, meno) thumbnailu, alebo None. Thumbnaily sú vždy JPEG –
+    aj pre .png zdroj, nech sedí Content-Type."""
+    src = safe_photo_path(filename)
+    if src is None or not src.is_file():
         return None
-    thumb_path = Path(OUTPUT_FOLDER) / "_thumbs" / filename
+    size = size or THUMB_MAX_PX
+    rel  = src.relative_to(Path(OUTPUT_FOLDER).resolve())
+    thumb_path = _thumb_root() / str(size) / (str(rel) + ".jpg")
     try:
         if thumb_path.exists() and thumb_path.stat().st_mtime >= src.stat().st_mtime:
             return (str(thumb_path.parent), thumb_path.name)
@@ -721,29 +839,99 @@ def _get_or_create_thumb(filename: str):
         pass
     try:
         thumb_path.parent.mkdir(parents=True, exist_ok=True)
-        img = Image.open(src)
-        img = ImageOps.exif_transpose(img)
-        img.thumbnail((THUMB_MAX_PX, THUMB_MAX_PX), Image.LANCZOS)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.save(thumb_path, "JPEG", quality=THUMB_QUALITY, optimize=True)
+        with Image.open(src) as raw:
+            img = ImageOps.exif_transpose(raw)
+            img.thumbnail((size, size), Image.LANCZOS)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(thumb_path, "JPEG", quality=THUMB_QUALITY, optimize=True)
     except Exception as e:
         log.warning("Thumbnail chyba {}: {}".format(filename, e))
         if src.is_file():
-            return (OUTPUT_FOLDER, filename)
+            return (str(src.parent), src.name)
         return None
     return (str(thumb_path.parent), thumb_path.name)
 
+
+def _forget_thumbs(rel):
+    """Zmaž thumbnaily fotky vo všetkých veľkostiach."""
+    root = _thumb_root()
+    for size in THUMB_SIZES:
+        for candidate in (root / str(size) / (str(rel) + ".jpg"), root / str(size) / str(rel)):
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
+    legacy = Path(OUTPUT_FOLDER) / "_thumbs" / rel
+    try:
+        legacy.unlink()
+    except OSError:
+        pass
+
+
+# ── Bezpečné cesty ────────────────────────────────────────────────────────────
+# Flask konvertor <path:…> prepustí do handlera aj "../.." (aj v %2e%2e forme),
+# takže každá cesta poskladaná z URL musí prejsť týmto helperom. send_from_directory
+# si síce robí vlastný safe_join, ale routy, ktoré s cestou ešte niečo robia
+# (mazanie, zápis thumbnailu, čítanie EXIF), by inak siahli mimo knižnice fotiek.
+
+def safe_photo_path(filename: str):
+    """Absolútna cesta k súboru v knižnici fotiek, alebo None ak vedie mimo nej."""
+    if not filename:
+        return None
+    base = Path(OUTPUT_FOLDER).resolve()
+    try:
+        target = (base / filename).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return None
+    if target != base and base not in target.parents:
+        return None
+    return target
+
+
+def safe_album(album: str) -> str:
+    """Názov albumu je vždy jediný priečinok priamo v knižnici – nikdy cesta."""
+    album = (album or "").strip().strip("/")
+    if not album or album in ("all", ".", ".."):
+        return "" if album != "all" else "all"
+    name = Path(album).name
+    if name in (".", "..") or name in HIDDEN_DIRS:
+        return ""
+    return name
+
+
 # ── Autentifikácia ────────────────────────────────────────────────────────────
+
+# Endpointy, ktoré niečo menia. Čítanie ostáva otvorené, aby rám na tablete
+# fungoval bez prihlásenia; zápis vyžaduje token, ak je nastavený.
+WRITE_ENDPOINTS = {
+    "upload_file", "delete_photo", "trigger_scan", "waste_config_save_route",
+    "waste_import_route", "weather_update_route", "weather_mode_on_route",
+    "weather_mode_off_route",
+}
+
+
+def _token_ok() -> bool:
+    supplied = request.headers.get("X-SnapFrame-Token", "") or request.args.get("token", "")
+    return hmac.compare_digest(supplied, API_TOKEN)
+
 
 @app.before_request
 def check_auth():
-    if not BASIC_AUTH_USER:
+    # /health je zámerne bez autentifikácie: je to sonda pre watchdog
+    # Home Assistanta, ktorý žiadne prihlasovacie údaje nemá.
+    if request.endpoint == "health_route":
         return
-    auth = request.authorization
-    if not auth or auth.username != BASIC_AUTH_USER or auth.password != BASIC_AUTH_PASS:
-        return Response("Unauthorized", 401,
-                        {"WWW-Authenticate": 'Basic realm="SnapFrame"'})
+    if BASIC_AUTH_USER:
+        auth = request.authorization
+        ok = (auth is not None
+              and hmac.compare_digest(auth.username or "", BASIC_AUTH_USER)
+              and hmac.compare_digest(auth.password or "", BASIC_AUTH_PASS))
+        if not ok:
+            return Response("Unauthorized", 401,
+                            {"WWW-Authenticate": 'Basic realm="SnapFrame"'})
+    if API_TOKEN and request.endpoint in WRITE_ENDPOINTS and not _token_ok():
+        return jsonify({"ok": False, "error": "token_required"}), 401
 
 # ── Upload helpers ────────────────────────────────────────────────────────────
 
@@ -775,47 +963,60 @@ def photos_route():
 
 @app.route("/thumb/<path:filename>")
 def thumb(filename):
-    result = _get_or_create_thumb(filename)
+    result = _get_or_create_thumb(filename, _closest_size(request.args.get("w")))
     if result is None:
         return ("not found", 404)
-    return send_from_directory(result[0], result[1])
+    return send_from_directory(result[0], result[1], max_age=PHOTO_MAX_AGE)
 
 @app.route("/album-cover/<path:album>")
 def album_cover(album):
-    photos = list_photos(album)
+    photos = list_photos(safe_album(album))
     if not photos:
         return ("", 404)
     result = _get_or_create_thumb(photos[0])
     if result is None:
         return ("", 404)
-    return send_from_directory(result[0], result[1])
+    return send_from_directory(result[0], result[1], max_age=PHOTO_MAX_AGE)
 
 @app.route("/photo/<path:filename>")
 def photo(filename):
-    return send_from_directory(OUTPUT_FOLDER, filename)
+    src = safe_photo_path(filename)
+    if src is None or not src.is_file():
+        return ("not found", 404)
+    return send_from_directory(str(src.parent), src.name, max_age=PHOTO_MAX_AGE)
 
 @app.route("/exif/<path:filename>")
 def exif_route(filename):
-    path      = Path(OUTPUT_FOLDER) / filename
+    path = safe_photo_path(filename)
+    if path is None:
+        return jsonify({"date": "", "location": ""}), 404
     date_str  = ""
     loc_str   = ""
-    lang      = LANGUAGE if LANGUAGE in MONTHS else "sk"
-    exif_date = get_exif_date(path)
+    lang = LANGUAGE if LANGUAGE in MONTHS else "sk"
+    exif_date, coords, cached_loc = _photo_meta(path)
     if exif_date is None and path.exists():
         exif_date = datetime.fromtimestamp(path.stat().st_mtime)
     if exif_date:
         date_str = "{} {}".format(MONTHS[lang][exif_date.month - 1], exif_date.year)
-    coords = get_gps_coords(path)
-    if coords:
+    if cached_loc is not None:
+        loc_str = cached_loc
+    elif coords:
         loc_str = reverse_geocode(coords[0], coords[1], lang)
+        if _has_index:
+            try:
+                rel = str(path.resolve().relative_to(Path(OUTPUT_FOLDER).resolve()))
+                _index.set_location(rel, loc_str)
+            except ValueError:
+                pass
     return jsonify({"date": date_str, "location": loc_str})
 
 @app.route("/delete/<path:filename>", methods=["POST"])
 def delete_photo(filename):
-    src = Path(OUTPUT_FOLDER) / filename
-    if not src.is_file():
+    src = safe_photo_path(filename)
+    if src is None or not src.is_file():
         return jsonify({"ok": False, "error": "not found"}), 404
-    kos_dir = Path(OUTPUT_FOLDER) / "_kos" / Path(filename).parent
+    rel     = src.relative_to(Path(OUTPUT_FOLDER).resolve())
+    kos_dir = Path(OUTPUT_FOLDER) / "_kos" / rel.parent
     kos_dir.mkdir(parents=True, exist_ok=True)
     dest = kos_dir / src.name
     c = 1
@@ -823,10 +1024,9 @@ def delete_photo(filename):
         dest = kos_dir / "{}_{}.{}".format(src.stem, c, src.suffix.lstrip("."))
         c += 1
     src.rename(dest)
-    thumb_p = Path(OUTPUT_FOLDER) / "_thumbs" / filename
-    if thumb_p.exists():
-        try: thumb_p.unlink()
-        except Exception: pass
+    _forget_thumbs(rel)
+    if _has_index:
+        _index.forget(str(rel))
     return jsonify({"ok": True})
 
 @app.route("/upload", methods=["POST"])
@@ -837,7 +1037,8 @@ def upload_file():
         return jsonify({"ok": False, "error": "no file"}), 400
     original_name = _safe_filename(f.filename)
     ext = Path(original_name).suffix.lower()
-    target_dir = (Path(OUTPUT_FOLDER) / album) if album else Path(OUTPUT_FOLDER)
+    album = safe_album(album)
+    target_dir = (Path(OUTPUT_FOLDER) / album) if album and album != "all" else Path(OUTPUT_FOLDER)
     target_dir.mkdir(parents=True, exist_ok=True)
     if ext in (".heic", ".heif"):
         try:
@@ -873,6 +1074,11 @@ def trigger_scan():
         _state.request_scan()
         return jsonify({"ok": True})
     return jsonify({"ok": False}), 503
+
+@app.route("/health")
+def health_route():
+    """Sonda pre watchdog add-onu – nič nepočíta, len potvrdí, že server žije."""
+    return jsonify({"ok": True})
 
 @app.route("/status")
 def status_route():
@@ -1120,2468 +1326,27 @@ def waste_import_route():
 
 @app.route("/")
 def index():
-    html = r"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
-<title>SnapFrame</title>
-<style>
-html, body {
-  margin: 0; padding: 0; width: 100%; height: 100%;
-  background: #0c0c0c;
-  font-family: -apple-system, Helvetica, Arial, sans-serif;
-  color: #eee; overflow: hidden;
-}
-/* ===== VÝBERNÁ OBRAZOVKA ===== */
-#screen-select {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  overflow-y: auto; -webkit-overflow-scrolling: touch;
-  padding: 48px 24px 48px; -webkit-box-sizing: border-box;
-  box-sizing: border-box; text-align: center;
-}
-.sel-title {
-  font-size: 26px; font-weight: 200; letter-spacing: 8px;
-  text-transform: uppercase; color: #fff; margin-bottom: 4px;
-}
-.sel-subtitle {
-  font-size: 13px; color: #444; letter-spacing: 2px; margin-bottom: 18px;
-}
-.top-actions { margin-bottom: 32px; }
-.scan-btn {
-  background: transparent; border: 1px solid #2a2a2a; border-radius: 6px;
-  color: #555; font-size: 12px; letter-spacing: 1px; padding: 7px 16px;
-  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
-  -webkit-transition: color .15s, border-color .15s; transition: color .15s, border-color .15s;
-}
-.scan-btn.done { color: #4caf50; border-color: #4caf50; }
-.order-label {
-  font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
-  color: #555; margin-bottom: 10px;
-}
-.order-row {
-  display: inline-block; border: 1px solid #2a2a2a; border-radius: 8px;
-  overflow: hidden; margin-bottom: 40px;
-}
-.order-btn {
-  display: inline-block; padding: 10px 24px; background: transparent;
-  border: none; color: #666; font-size: 14px; cursor: pointer; outline: none;
-  -webkit-tap-highlight-color: transparent;
-  -webkit-transition: background .15s, color .15s; transition: background .15s, color .15s;
-}
-.order-btn.active { background: #222; color: #fff; }
-.album-list {
-  text-align: left; max-width: 460px; margin: 0 auto 32px;
-}
-.album-btn {
-  display: block; width: 100%; padding: 15px 18px; margin-bottom: 10px;
-  background: #161616; border: 1px solid #242424; border-radius: 10px;
-  color: #ddd; font-size: 16px; text-align: left; cursor: pointer; outline: none;
-  position: relative; overflow: hidden; -webkit-box-sizing: border-box;
-  box-sizing: border-box; -webkit-tap-highlight-color: transparent;
-  -webkit-transition: background .15s; transition: background .15s;
-  background-size: cover; background-position: center;
-}
-.album-btn:active { background-color: #222; }
-.album-btn.all-btn { border-color: #333; color: #fff; }
-.album-btn-overlay {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.62);
-}
-.album-btn-inner { position: relative; z-index: 1; }
-.album-icon { margin-right: 10px; opacity: 0.6; }
-.all-icon   { opacity: 0.9; }
-.album-count { float: right; color: #999; font-size: 13px; margin-top: 2px; }
-.sel-empty { color: #444; font-size: 14px; padding: 20px 0; text-align: center; }
-/* ===== UPLOAD ===== */
-.upload-toggle {
-  background: transparent; border: 1px solid #222; border-radius: 8px;
-  color: #555; font-size: 13px; letter-spacing: 1px; padding: 10px 22px;
-  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
-  margin-bottom: 16px; display: block; width: 100%; max-width: 460px;
-  margin-left: auto; margin-right: auto; text-align: center;
-  -webkit-box-sizing: border-box; box-sizing: border-box;
-}
-#upload-section {
-  display: none; max-width: 460px; margin: 0 auto 32px;
-  background: #111; border: 1px solid #222; border-radius: 12px;
-  padding: 20px 18px; text-align: left;
-}
-.upload-label {
-  font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
-  color: #555; margin-bottom: 8px; display: block;
-}
-.upload-select {
-  width: 100%; background: #1c1c1c; border: 1px solid #2c2c2c;
-  border-radius: 7px; color: #ccc; font-size: 14px; padding: 10px 12px;
-  -webkit-box-sizing: border-box; box-sizing: border-box;
-  margin-bottom: 16px; outline: none; -webkit-appearance: none;
-}
-.upload-file-btn {
-  display: block; width: 100%; padding: 12px; background: #1c1c1c;
-  border: 1px dashed #333; border-radius: 8px; color: #777;
-  font-size: 14px; text-align: center; cursor: pointer;
-  -webkit-box-sizing: border-box; box-sizing: border-box;
-  margin-bottom: 14px; -webkit-tap-highlight-color: transparent; outline: none;
-}
-.upload-file-btn.has-files { border-color: #555; color: #bbb; }
-#upload-files { display: none; }
-.upload-go-btn {
-  display: block; width: 100%; padding: 13px;
-  background: #1a3a2a; border: 1px solid #2a5a3a; border-radius: 8px;
-  color: #5dba7e; font-size: 15px; text-align: center; cursor: pointer;
-  outline: none; -webkit-tap-highlight-color: transparent;
-  -webkit-box-sizing: border-box; box-sizing: border-box;
-  -webkit-transition: background .15s; transition: background .15s;
-}
-.upload-go-btn:disabled { opacity: 0.4; }
-.upload-status {
-  margin-top: 12px; font-size: 13px; color: #666; min-height: 20px; text-align: center;
-}
-.upload-status.ok  { color: #5dba7e; }
-.upload-status.err { color: #c0392b; }
-.upload-gps-hint {
-  font-size: 11px; line-height: 1.5; color: #4a4a4a;
-  margin: -4px 0 14px;
-}
-/* ===== SLIDESHOW ===== */
-#screen-slideshow {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  background: #000; display: none;
-}
-.photo {
-  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-  background-position: center center; background-repeat: no-repeat;
-  background-size: contain; opacity: 0;
-  -webkit-transition: opacity 1.5s ease-in-out, -webkit-transform 1.8s ease-in-out;
-  transition: opacity 1.5s ease-in-out, transform 1.8s ease-in-out;
-}
-.photo.fade-start      { -webkit-transform: scale(1);       transform: scale(1); }
-.photo.fade-end        { -webkit-transform: scale(1);       transform: scale(1); }
-.photo.zoomin-start    { -webkit-transform: scale(1.0);     transform: scale(1.0); }
-.photo.zoomin-end      { -webkit-transform: scale(1.12);    transform: scale(1.12); }
-.photo.zoomout-start   { -webkit-transform: scale(1.12);    transform: scale(1.12); }
-.photo.zoomout-end     { -webkit-transform: scale(1.0);     transform: scale(1.0); }
-.photo.slideleft-start { -webkit-transform: translateX(4%); transform: translateX(4%); }
-.photo.slideleft-end   { -webkit-transform: translateX(0);  transform: translateX(0); }
-.photo.slideup-start   { -webkit-transform: translateY(4%); transform: translateY(4%); }
-.photo.slideup-end     { -webkit-transform: translateY(0);  transform: translateY(0); }
-.photo.visible { opacity: 1; }
-#photo-counter {
-  position: absolute; top: 14px; right: 18px; z-index: 90;
-  color: rgba(255,255,255,0.32); font-size: 13px; letter-spacing: 1px;
-  pointer-events: none; text-shadow: 0 1px 4px rgba(0,0,0,0.8);
-}
-#overlay {
-  position: absolute; bottom: 18px; left: 18px; right: 18px;
-  z-index: 90; pointer-events: none;
-}
-#overlay-date {
-  font-size: 26px; font-weight: 300; line-height: 1.1; letter-spacing: 1px;
-  color: rgba(255,255,255,0.80); margin-bottom: 5px;
-  text-shadow: 0 2px 10px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.8);
-}
-#overlay-location {
-  font-size: 36px; font-weight: 200; line-height: 1.1;
-  color: rgba(255,255,255,0.93);
-  text-shadow: 0 2px 10px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.8);
-}
-/* ===== WEATHER SLIDE ===== */
-/* Fluidná typografia (clamp + vw): škáluje sa s veľkosťou obrazovky,
-   aby bola obrazovka čitateľná aj z druhého konca miestnosti. */
-#weather-slide {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 80;
-  background:
-    radial-gradient(ellipse at 50% 26%, #1c2c4a 0%, #0a1120 55%, #05070e 100%);
-  display: none; -webkit-flex-direction: column; flex-direction: column;
-  align-items: center; justify-content: center; text-align: center;
-  padding: 4vh 4vw; -webkit-box-sizing: border-box; box-sizing: border-box;
-  opacity: 0; -webkit-transition: opacity 1s ease-in-out; transition: opacity 1s ease-in-out;
-}
-#weather-slide.visible { display: -webkit-flex; display: flex; opacity: 1; }
-/* — Hero: veľká ikona + obrovská teplota vedľa seba —
-   Pozn.: pred každým clamp()/min() je px fallback pre staré Safari
-   (napr. iPad Safari 9–12), ktoré clamp()/min() nepodporujú a inak by
-   celý riadok zahodili → text spadne na default a rozbije sa layout. */
-.weather-hero {
-  display: -webkit-flex; display: flex; -webkit-align-items: center; align-items: center;
-  -webkit-justify-content: center; justify-content: center;
-  gap: 28px;
-  gap: clamp(12px, 2.5vw, 40px);
-}
-.weather-icon {
-  font-size: 130px;
-  font-size: clamp(78px, 12vw, 168px); line-height: 1;
-  filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
-  -webkit-filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
-}
-.weather-main { text-align: left; }
-.weather-temp {
-  font-size: 160px;
-  font-size: clamp(92px, 16vw, 220px); font-weight: 200; letter-spacing: -0.03em;
-  color: #fff; line-height: 0.9;
-  text-shadow: 0 3px 30px rgba(0,0,0,0.5);
-}
-.weather-cond {
-  font-size: 30px;
-  font-size: clamp(20px, 3vw, 44px); font-weight: 300; letter-spacing: 0.01em;
-  color: rgba(255,255,255,0.82);
-  margin-top: 10px; margin-top: clamp(4px, 0.8vw, 14px);
-}
-/* — Max/Min dnešného dňa — */
-.weather-range {
-  margin-top: 30px; margin-top: clamp(18px, 3.2vh, 44px);
-  font-size: 18px; font-size: clamp(15px, 1.7vw, 24px);
-  letter-spacing: 0.12em; text-transform: uppercase;
-  color: rgba(255,255,255,0.5);
-}
-.weather-range .val {
-  color: #fff;
-  font-size: 24px; font-size: clamp(19px, 2.2vw, 32px);
-  text-transform: none; letter-spacing: 0;
-  margin-left: 8px; margin-left: clamp(6px, 0.7vw, 12px);
-  margin-right: 22px;  /* medzera pred ďalším popiskom aj bez flex `gap` (staré Safari) */
-}
-/* — Hodinová predpoveď: menej, ale veľkých kariet, čitateľných zďaleka — */
-.weather-hourly {
-  margin-top: 44px; margin-top: clamp(26px, 4.5vh, 70px);
-  display: -webkit-flex; display: flex; -webkit-flex-wrap: nowrap; flex-wrap: nowrap;
-  gap: 14px; gap: clamp(8px, 1.2vw, 20px);
-  width: 100%; max-width: 1500px; -webkit-justify-content: center; justify-content: center;
-}
-.weather-hour {
-  display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column;
-  -webkit-align-items: center; align-items: center; -webkit-flex: 1 1 0%; flex: 1 1 0%;
-  min-width: 0; max-width: 220px;
-  -webkit-box-sizing: border-box; box-sizing: border-box;
-  padding: 20px 10px 18px;
-  padding: clamp(14px, 1.8vh, 26px) clamp(4px, 1vw, 16px) clamp(13px, 1.7vh, 24px);
-  border-radius: 18px; border-radius: clamp(16px, 1.8vw, 26px);
-  background: rgba(255,255,255,0.055); border: 1px solid rgba(255,255,255,0.07);
-}
-.weather-hour.now {
-  background: rgba(120,170,255,0.16); border-color: rgba(140,185,255,0.4);
-}
-.weather-hour .wh-time {
-  font-size: 19px; font-size: clamp(15px, 1.9vw, 27px);
-  letter-spacing: 0.03em; font-weight: 300;
-  color: rgba(255,255,255,0.72);
-}
-.weather-hour.now .wh-time { color: #cfe0ff; }
-.weather-hour .wh-ico  {
-  font-size: 44px; font-size: clamp(34px, 4.6vw, 68px); line-height: 1;
-  margin: 12px 0 10px; margin: clamp(9px, 1.3vh, 18px) 0 clamp(8px, 1.1vh, 16px);
-}
-.weather-hour .wh-temp {
-  font-size: 26px; font-size: clamp(23px, 3.2vw, 46px);
-  font-weight: 400; color: #fff; line-height: 1;
-}
-.weather-date {
-  position: absolute; bottom: 28px; bottom: clamp(20px, 3.5vh, 44px);
-  left: 0; right: 0; text-align: center;
-  font-size: 15px; font-size: clamp(13px, 1.4vw, 20px);
-  letter-spacing: 0.22em; text-transform: uppercase;
-  color: rgba(255,255,255,0.32);
-}
-/* — Portrét (tablet/telefón na výšku): hero na stred, hodiny ako riadky zhora dole — */
-@media (orientation: portrait) {
-  #weather-slide {
-    -webkit-justify-content: center; justify-content: center;
-    padding: 3vh 5vw;
-  }
-  .weather-hero {
-    -webkit-flex-direction: column; flex-direction: column;
-    gap: 6px; gap: clamp(2px, 0.6vh, 8px);
-  }
-  .weather-main { text-align: center; }
-  .weather-temp { font-size: 150px; font-size: clamp(80px, 21vw, 190px); }
-  .weather-icon { font-size: 120px; font-size: clamp(74px, 17vw, 150px); }
-  .weather-cond {
-    font-size: 30px; font-size: clamp(21px, 4.6vw, 36px);
-    margin-top: 6px; margin-top: clamp(2px, 0.5vh, 8px);
-  }
-  .weather-range {
-    margin-top: 20px; margin-top: clamp(10px, 1.8vh, 26px);
-    font-size: 20px; font-size: clamp(15px, 3.3vw, 24px);
-  }
-  .weather-range .val { font-size: 24px; font-size: clamp(19px, 4.2vw, 28px); }
-  /* Hodiny ako riadky zhora dole. Zámerne NIE flexbox ani gap/clamp/min pre
-     štruktúru – starý iPad Safari (9–13) má buggy flexbox a nepozná gap/clamp/min.
-     display:table + table-cell funguje spoľahlivo aj na prastarom Safari. */
-  .weather-hourly {
-    display: block;
-    width: 360px; width: min(92%, 360px);
-    max-width: 92%;
-    margin-left: auto; margin-right: auto;
-    margin-top: 28px; margin-top: clamp(14px, 2.6vh, 36px);
-  }
-  .weather-hour {
-    display: table; table-layout: fixed; width: 100%;
-    -webkit-flex: 0 1 auto; flex: 0 1 auto; max-width: none;
-    margin: 0 auto 10px; margin-bottom: clamp(7px, 1vh, 13px);
-    padding: 14px 22px;
-    padding: clamp(8px, 1.3vh, 18px) clamp(16px, 5vw, 24px);
-  }
-  .weather-hour .wh-time {
-    display: table-cell; vertical-align: middle; text-align: left; width: 32%;
-    font-size: 28px; font-size: clamp(21px, 5.4vw, 34px);
-  }
-  .weather-hour .wh-ico {
-    display: table-cell; vertical-align: middle; text-align: center; margin: 0;
-    font-size: 44px; font-size: clamp(32px, 7.6vw, 52px);
-  }
-  .weather-hour .wh-temp {
-    display: table-cell; vertical-align: middle; text-align: right; width: 32%;
-    font-size: 36px; font-size: clamp(26px, 6.6vw, 44px);
-  }
-  /* dátum do toku, nech neprekrýva riadky na vysokom obsahu */
-  .weather-date {
-    position: static;
-    margin-top: 24px; margin-top: clamp(16px, 3vh, 34px); bottom: auto;
-  }
-}
-/* ===== ODPAD: štítok v rohu fotky ===== */
-/* Rovnaký princíp ako weather slide: vždy px fallback pred clamp(),
-   žiadny flex `gap` – starý iPad Safari (9–13) ich nepozná. */
-#waste-badge {
-  position: absolute; top: 16px; left: 18px; z-index: 95;
-  display: none; max-width: 62%;
-  background: rgba(8,10,14,0.62);
-  border-radius: 14px; border-radius: clamp(12px, 1.2vw, 18px);
-  border-left: 6px solid #9aa5b1;
-  padding: 12px 18px 12px 14px;
-  padding: clamp(9px, 1.4vh, 18px) clamp(13px, 1.5vw, 24px) clamp(9px, 1.4vh, 18px) clamp(10px, 1.1vw, 18px);
-  -webkit-box-sizing: border-box; box-sizing: border-box;
-  text-shadow: 0 2px 8px rgba(0,0,0,0.9);
-  pointer-events: none;
-}
-#waste-badge.visible { display: block; }
-.wb-row { display: table; width: 100%; }
-.wb-ico {
-  display: table-cell; vertical-align: middle; padding-right: 12px;
-  font-size: 38px; font-size: clamp(30px, 3.4vw, 54px); line-height: 1;
-}
-.wb-text { display: table-cell; vertical-align: middle; text-align: left; }
-.wb-when {
-  font-size: 13px; font-size: clamp(11px, 1.1vw, 17px);
-  letter-spacing: 0.18em; text-transform: uppercase;
-  color: rgba(255,255,255,0.55); margin-bottom: 3px;
-}
-.wb-what {
-  font-size: 26px; font-size: clamp(20px, 2.2vw, 36px);
-  font-weight: 300; color: #fff; line-height: 1.15;
-}
-/* ===== ODPAD: celoobrazovkový slide ===== */
-#waste-slide {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 82;
-  background:
-    radial-gradient(ellipse at 50% 28%, #1d3324 0%, #0c1712 55%, #05080b 100%);
-  display: none; -webkit-flex-direction: column; flex-direction: column;
-  align-items: center; justify-content: center; text-align: center;
-  padding: 4vh 5vw; -webkit-box-sizing: border-box; box-sizing: border-box;
-  opacity: 0; -webkit-transition: opacity 1s ease-in-out; transition: opacity 1s ease-in-out;
-}
-#waste-slide.visible { display: block; display: -webkit-flex; display: flex; opacity: 1; }
-.waste-when {
-  font-size: 24px; font-size: clamp(18px, 2.4vw, 38px);
-  letter-spacing: 0.26em; text-transform: uppercase;
-  color: rgba(255,255,255,0.55);
-  margin-bottom: 18px; margin-bottom: clamp(10px, 2vh, 30px);
-}
-.waste-icons {
-  font-size: 110px; font-size: clamp(70px, 13vw, 168px); line-height: 1.05;
-  filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
-  -webkit-filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
-}
-.waste-names {
-  font-size: 58px; font-size: clamp(34px, 6.4vw, 96px);
-  font-weight: 200; letter-spacing: -0.01em; color: #fff; line-height: 1.1;
-  margin-top: 16px; margin-top: clamp(8px, 1.8vh, 26px);
-  text-shadow: 0 3px 30px rgba(0,0,0,0.5);
-}
-.waste-names .wn-sep { color: rgba(255,255,255,0.32); }
-.waste-accent {
-  width: 120px; width: clamp(80px, 11vw, 190px);
-  height: 6px; height: clamp(4px, 0.6vh, 9px);
-  border-radius: 4px; background: #7cb342;
-  margin: 26px auto 0; margin-top: clamp(16px, 2.6vh, 36px);
-}
-.waste-hint {
-  font-size: 22px; font-size: clamp(16px, 2vw, 32px); font-weight: 300;
-  color: rgba(255,255,255,0.7);
-  margin-top: 26px; margin-top: clamp(15px, 2.6vh, 38px);
-  max-width: 900px;
-}
-.waste-date {
-  position: absolute; bottom: 28px; bottom: clamp(20px, 3.5vh, 44px);
-  left: 0; right: 0; text-align: center;
-  font-size: 15px; font-size: clamp(13px, 1.4vw, 20px);
-  letter-spacing: 0.22em; text-transform: uppercase;
-  color: rgba(255,255,255,0.32);
-}
-@media (orientation: portrait) {
-  .waste-names { font-size: 46px; font-size: clamp(30px, 9vw, 62px); }
-  .waste-icons { font-size: 96px; font-size: clamp(64px, 20vw, 130px); }
-  .waste-when  { font-size: 20px; font-size: clamp(15px, 4vw, 26px); }
-  .waste-hint  { font-size: 20px; font-size: clamp(15px, 4vw, 26px); }
-  .waste-date  { position: static; margin-top: 26px; }
-}
-/* ===== ODPAD: import harmonogramu ===== */
-.wimp-intro { font-size: 12px; line-height: 1.55; color: #6a6a6a; margin-bottom: 12px; }
-.wimp-hint  { font-size: 11px; line-height: 1.55; color: #4a4a4a; margin: 8px 0 12px; }
-#waste-import-file { display: none; }
-.wimp-serie {
-  display: table; width: 100%; background: #151515; border: 1px solid #232323;
-  border-radius: 11px; padding: 12px 13px; margin-bottom: 8px;
-  -webkit-box-sizing: border-box; box-sizing: border-box;
-  cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
-.wimp-serie.on { border-color: #4a7fd6; background: #171e2b; }
-.wimp-serie .ws-sw {
-  display: table-cell; vertical-align: middle; width: 34px;
-}
-.wimp-serie .ws-chip {
-  width: 22px; height: 22px; border-radius: 6px;
-  border: 3px solid transparent; -webkit-box-sizing: border-box; box-sizing: border-box;
-}
-.wimp-serie .ws-txt { display: table-cell; vertical-align: middle; padding-right: 8px; }
-.wimp-serie .ws-name { color: #e8e8e8; font-size: 14px; margin-bottom: 2px; }
-.wimp-serie .ws-sub  { color: #6b6b6b; font-size: 11.5px; line-height: 1.45; }
-.wimp-serie .ws-box  {
-  display: table-cell; vertical-align: middle; width: 24px;
-  text-align: right; color: #3a3a3a; font-size: 17px;
-}
-.wimp-serie.on .ws-box { color: #5b9bf8; }
-.wimp-type {
-  /* prisadnutý k svojmu radu, aby bolo jasné, ku ktorému riadku patrí */
-  width: 92%; margin: -4px 0 10px auto; display: block;
-  -webkit-box-sizing: border-box; box-sizing: border-box;
-  background: #1b1b1b; border: 1px solid #2a2a2a; border-radius: 8px;
-  color: #ddd; font-size: 13px; padding: 8px 10px; outline: none;
-}
-/* ===== ODPAD: editor kalendára ===== */
-#waste-dialog {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  z-index: 400; background: #0c0c0c; display: none;
-  overflow-y: auto; -webkit-overflow-scrolling: touch;
-  padding: 26px 18px 40px; -webkit-box-sizing: border-box; box-sizing: border-box;
-}
-.wd-inner { max-width: 560px; margin: 0 auto; text-align: left; }
-.wd-title {
-  font-size: 13px; letter-spacing: 2.5px; text-transform: uppercase;
-  color: #777; margin-bottom: 22px; text-align: center;
-}
-.wd-group { margin-bottom: 22px; }
-.wd-label {
-  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
-  color: #555; margin-bottom: 9px;
-}
-.wd-hint { font-size: 11px; line-height: 1.5; color: #4a4a4a; margin-top: 6px; }
-.wd-seg { display: block; width: 100%; font-size: 0; }
-.wd-seg .wd-opt {
-  display: inline-block; -webkit-box-sizing: border-box; box-sizing: border-box;
-  background: #171717; border: 1.5px solid #272727; border-radius: 10px;
-  padding: 11px 6px; text-align: center; color: #8b8b8b; font-size: 14px;
-  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
-  margin: 0 2% 8px 0; vertical-align: top;
-  -webkit-transition: border-color .15s, background .15s, color .15s;
-  transition: border-color .15s, background .15s, color .15s;
-}
-/* Šírky sú zámerne pod matematickým maximom: každá dlaždica má margin-right,
-   takže riadok musí vyjsť aj bez spoliehania sa na :last-child – inak by pri
-   10 druhoch odpadu vyšli riadky raz po 3 a raz po 4 kusoch. */
-.wd-seg.cols2 .wd-opt { width: 47.8%; }
-.wd-seg.cols3 .wd-opt { width: 31%; }
-.wd-seg.cols4 .wd-opt { width: 22.7%; }
-.wd-seg.cols7 .wd-opt { width: 12.1%; padding: 11px 2px; font-size: 13px; }
-.wd-seg .wd-opt.active { border-color: #4a7fd6; background: #1a2333; color: #dce6fb; }
-.wd-input, .wd-select {
-  width: 100%; -webkit-box-sizing: border-box; box-sizing: border-box;
-  background: #171717; border: 1px solid #272727; border-radius: 9px;
-  color: #ddd; font-size: 15px; padding: 11px 12px; outline: none;
-  -webkit-appearance: none; appearance: none;
-  font-family: -apple-system, Helvetica, Arial, sans-serif;
-}
-.wd-select { -webkit-appearance: menulist; appearance: menulist; }
-.wd-stepper { display: table; width: 100%; }
-.wd-stepper .wd-step-btn {
-  display: table-cell; width: 54px; text-align: center; vertical-align: middle;
-  background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 9px;
-  color: #bbb; font-size: 22px; line-height: 1; padding: 10px 0;
-  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
-  -webkit-user-select: none; user-select: none;
-}
-.wd-stepper .wd-step-val {
-  display: table-cell; text-align: center; vertical-align: middle;
-  color: #fff; font-size: 19px; font-weight: 300;
-}
-.wd-check {
-  display: table; width: 100%; background: #171717; border: 1px solid #262626;
-  border-radius: 10px; padding: 12px 14px; -webkit-box-sizing: border-box;
-  box-sizing: border-box; cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
-.wd-check .wc-txt { display: table-cell; vertical-align: middle; color: #bbb; font-size: 14px; }
-.wd-check .wc-box {
-  display: table-cell; vertical-align: middle; width: 26px; text-align: right;
-  color: #3a3a3a; font-size: 18px;
-}
-.wd-check.on .wc-box { color: #5b9bf8; }
-.wd-check.on .wc-txt { color: #e6e6e6; }
-.wd-rule {
-  display: table; width: 100%; background: #151515; border: 1px solid #232323;
-  border-left-width: 5px; border-radius: 11px; padding: 13px 14px; margin-bottom: 9px;
-  -webkit-box-sizing: border-box; box-sizing: border-box;
-  cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
-.wd-rule .wr-ico { display: table-cell; vertical-align: middle; width: 40px; font-size: 25px; }
-.wd-rule .wr-txt { display: table-cell; vertical-align: middle; }
-.wd-rule .wr-name { color: #eee; font-size: 15px; margin-bottom: 2px; }
-.wd-rule .wr-sub  { color: #6b6b6b; font-size: 12px; line-height: 1.4; }
-.wd-rule .wr-go   { display: table-cell; vertical-align: middle; width: 22px;
-                    text-align: right; color: #444; font-size: 17px; }
-.wd-empty { color: #4a4a4a; font-size: 13px; padding: 14px 2px; }
-.wd-btn {
-  display: block; width: 100%; -webkit-box-sizing: border-box; box-sizing: border-box;
-  padding: 13px; border-radius: 10px; font-size: 15px; text-align: center;
-  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
-  border: 1px solid #2c2c2c; background: #202020; color: #ccc; margin-bottom: 9px;
-}
-.wd-btn.primary { background: #24457c; border-color: #2f5da8; color: #eaf1ff; }
-.wd-btn.danger  { background: #2a1616; border-color: #4a2020; color: #d98a8a; }
-.wd-btn.ghost   { background: transparent; border-color: #262626; color: #777; }
-.wd-status { font-size: 13px; text-align: center; min-height: 18px; margin-bottom: 8px; color: #888; }
-.wd-status.ok  { color: #4caf50; }
-.wd-status.err { color: #d9534f; }
-.wd-chips { font-size: 0; }
-.wd-chip {
-  display: inline-block; background: #1b1b1b; border: 1px solid #2a2a2a;
-  border-radius: 20px; padding: 7px 12px; margin: 0 6px 6px 0;
-  color: #bbb; font-size: 13px; cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
-.wd-chip .wc-x { color: #666; margin-left: 7px; }
-.wd-chip.month.on { background: #1a2333; border-color: #4a7fd6; color: #dce6fb; }
-.wd-daterow { display: table; width: 100%; }
-.wd-daterow .wd-dcell { display: table-cell; vertical-align: middle; }
-.wd-daterow .wd-dbtn  {
-  display: table-cell; vertical-align: middle; width: 90px; padding-left: 8px;
-}
-.wd-preview-day {
-  display: table; width: 100%; padding: 9px 0; border-bottom: 1px solid #1c1c1c;
-}
-.wd-preview-day .wp-date { display: table-cell; vertical-align: middle; width: 45%;
-                           color: #9a9a9a; font-size: 13px; }
-.wd-preview-day .wp-types { display: table-cell; vertical-align: middle;
-                            color: #ddd; font-size: 13px; text-align: right; }
-/* ===== SETTINGS ===== */
-.settings-btn {
-  position: absolute; top: 18px; right: 18px; z-index: 60;
-  width: 38px; height: 38px; border-radius: 50%;
-  background: rgba(255,255,255,0.04); border: 1px solid #222;
-  color: #555; font-size: 17px; cursor: pointer; outline: none;
-  display: -webkit-flex; display: flex; align-items: center; justify-content: center;
-  -webkit-tap-highlight-color: transparent;
-  -webkit-transition: background .15s, color .15s, border-color .15s;
-  transition: background .15s, color .15s, border-color .15s;
-}
-.settings-btn:active { background: rgba(255,255,255,0.09); color: #999; }
-#settings-dialog {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  z-index: 300; background: rgba(0,0,0,0.72); display: none;
-}
-.settings-box {
-  position: absolute; top: 50%; left: 50%;
-  -webkit-transform: translate(-50%, -50%); transform: translate(-50%, -50%);
-  background: #161616; border: 1px solid #262626; border-radius: 16px;
-  padding: 26px 24px 22px; text-align: left; width: 86%; max-width: 380px;
-  -webkit-box-sizing: border-box; box-sizing: border-box;
-}
-.settings-title {
-  font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
-  color: #666; margin-bottom: 20px; text-align: center;
-}
-.settings-group { margin-bottom: 22px; }
-.settings-group:last-of-type { margin-bottom: 26px; }
-.settings-label {
-  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
-  color: #555; margin-bottom: 10px;
-}
-.theme-options { display: -webkit-flex; display: flex; gap: 10px; }
-.theme-opt {
-  -webkit-flex: 1; flex: 1; background: #1c1c1c; border: 1.5px solid #292929;
-  border-radius: 12px; padding: 14px 10px 12px; text-align: center;
-  cursor: pointer; -webkit-tap-highlight-color: transparent;
-  -webkit-transition: border-color .15s, background .15s; transition: border-color .15s, background .15s;
-}
-.theme-opt.active { border-color: #4a7fd6; background: #1a2333; }
-.theme-preview {
-  width: 100%; height: 46px; border-radius: 7px; margin-bottom: 8px;
-  position: relative; overflow: hidden; background: #050505;
-}
-.theme-preview.stars-preview {
-  background: radial-gradient(ellipse at 50% 20%, #10162a 0%, #050608 70%);
-}
-.theme-preview .tp-dot {
-  position: absolute; border-radius: 50%; background: #fff;
-}
-.theme-opt-label { font-size: 12px; color: #999; }
-.theme-opt.active .theme-opt-label { color: #dce6fb; }
-.settings-close {
-  display: block; width: 100%; padding: 12px;
-  background: #202020; border: 1px solid #2c2c2c; border-radius: 9px;
-  color: #ccc; font-size: 15px; text-align: center; cursor: pointer;
-  outline: none; -webkit-tap-highlight-color: transparent;
-  -webkit-box-sizing: border-box; box-sizing: border-box;
-}
-/* ===== SLEEP ===== */
-#screen-sleep {
-  display: none; position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: #000; z-index: 500; overflow: hidden;
-}
-#screen-sleep.theme-black { background: #000; }
-#screen-sleep.theme-stars {
-  background: radial-gradient(ellipse at 50% 15%, #0b1224 0%, #04050a 60%, #020204 100%);
-}
-#starfield-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-.sf-star { fill: #fff; }
-.sf-star.twinkle { -webkit-animation: sfTwinkle linear infinite; animation: sfTwinkle linear infinite; }
-@-webkit-keyframes sfTwinkle {
-  0%, 100% { opacity: var(--sf-min, 0.25); }
-  50%      { opacity: var(--sf-max, 1); }
-}
-@keyframes sfTwinkle {
-  0%, 100% { opacity: var(--sf-min, 0.25); }
-  50%      { opacity: var(--sf-max, 1); }
-}
-.sf-meteor {
-  position: absolute; width: 2px; height: 2px; border-radius: 50%;
-  background: #fff; opacity: 0;
-  -webkit-animation: sfMeteor 3.2s ease-in forwards;
-  animation: sfMeteor 3.2s ease-in forwards;
-}
-.sf-meteor::before {
-  content: ""; position: absolute; top: 1px; right: 1px;
-  width: 90px; height: 1.5px; border-radius: 2px;
-  background: linear-gradient(to left, rgba(255,255,255,0.9), rgba(255,255,255,0));
-  -webkit-transform-origin: right center; transform-origin: right center;
-  -webkit-transform: rotate(215deg); transform: rotate(215deg);
-}
-@-webkit-keyframes sfMeteor {
-  0%   { opacity: 0; -webkit-transform: translate(0,0); transform: translate(0,0); }
-  8%   { opacity: 1; }
-  75%  { opacity: 1; }
-  100% { opacity: 0; -webkit-transform: translate(-260px, 190px); transform: translate(-260px, 190px); }
-}
-@keyframes sfMeteor {
-  0%   { opacity: 0; transform: translate(0,0); }
-  8%   { opacity: 1; }
-  75%  { opacity: 1; }
-  100% { opacity: 0; transform: translate(-260px, 190px); }
-}
-/* ===== DELETE DIALOG ===== */
-#delete-dialog {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  z-index: 200; background: rgba(0,0,0,0.68); display: none;
-}
-.del-box {
-  position: absolute; top: 50%; left: 50%;
-  -webkit-transform: translate(-50%, -50%); transform: translate(-50%, -50%);
-  background: #1c1c1e; border-radius: 14px;
-  padding: 30px 26px 24px; text-align: center; min-width: 270px; max-width: 340px;
-}
-.del-title { font-size: 17px; color: #fff; margin-bottom: 8px; }
-.del-sub   { font-size: 13px; color: #888; margin-bottom: 26px; }
-.del-yes {
-  background: #c0392b; color: #fff; border: none; border-radius: 9px;
-  padding: 12px 28px; font-size: 16px; margin-right: 10px;
-  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
-}
-.del-no {
-  background: #2c2c2e; color: #ccc; border: none; border-radius: 9px;
-  padding: 12px 28px; font-size: 16px;
-  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
-}
-#ss-msg {
-  position: absolute; top: 50%; left: 0; right: 0; text-align: center;
-  color: #444; font-size: 17px;
-  -webkit-transform: translateY(-50%); transform: translateY(-50%); display: none;
-}
-</style>
-</head>
-<body>
-
-<!-- SLEEP OVERLAY -->
-<div id="screen-sleep">
-  <svg id="starfield-svg" xmlns="http://www.w3.org/2000/svg"></svg>
-</div>
-
-<!-- SETTINGS DIALOG -->
-<div id="settings-dialog" onclick="if(event.target===this){closeSettings();}">
-  <div class="settings-box">
-    <div class="settings-title" id="t-settings-title"></div>
-    <div class="settings-group">
-      <div class="settings-label" id="t-settings-sleep-label"></div>
-      <div class="theme-options">
-        <div class="theme-opt" id="theme-opt-black" onclick="chooseSleepTheme('black')">
-          <div class="theme-preview"></div>
-          <div class="theme-opt-label" id="t-theme-black"></div>
-        </div>
-        <div class="theme-opt" id="theme-opt-stars" onclick="chooseSleepTheme('stars')">
-          <div class="theme-preview stars-preview">
-            <div class="tp-dot" style="width:2px;height:2px;top:10px;left:14px;opacity:.9"></div>
-            <div class="tp-dot" style="width:1.5px;height:1.5px;top:22px;left:34px;opacity:.6"></div>
-            <div class="tp-dot" style="width:1.5px;height:1.5px;top:8px;left:58px;opacity:.7"></div>
-            <div class="tp-dot" style="width:2px;height:2px;top:28px;left:78px;opacity:.85"></div>
-            <div class="tp-dot" style="width:1px;height:1px;top:16px;left:96px;opacity:.5"></div>
-            <div class="tp-dot" style="width:1.5px;height:1.5px;top:32px;left:120px;opacity:.6"></div>
-          </div>
-          <div class="theme-opt-label" id="t-theme-stars"></div>
-        </div>
-      </div>
-    </div>
-    <div class="settings-group">
-      <button class="wd-btn" id="t-waste-open-btn" onclick="openWasteDialog()"></button>
-    </div>
-    <button class="settings-close" id="t-settings-close" onclick="closeSettings()"></button>
-  </div>
-</div>
-
-<!-- EDITOR KALENDÁRA VÝVOZU ODPADU -->
-<div id="waste-dialog">
-  <div class="wd-inner">
-    <div class="wd-title" id="t-waste-title"></div>
-
-    <!-- prehľad + globálne nastavenia -->
-    <div id="waste-main">
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-enabled-label"></div>
-        <div class="wd-seg cols2" id="waste-enabled-seg">
-          <div class="wd-opt" id="waste-en-off" onclick="wdSetEnabled(0)"></div>
-          <div class="wd-opt" id="waste-en-on"  onclick="wdSetEnabled(1)"></div>
-        </div>
-      </div>
-
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-display-label"></div>
-        <div class="wd-seg cols3" id="waste-mode-seg">
-          <div class="wd-opt" id="waste-mode-overlay" onclick="wdSetMode('overlay')"></div>
-          <div class="wd-opt" id="waste-mode-slide"   onclick="wdSetMode('slide')"></div>
-          <div class="wd-opt" id="waste-mode-both"    onclick="wdSetMode('both')"></div>
-        </div>
-      </div>
-
-      <div class="wd-group" id="waste-interval-group">
-        <div class="wd-label" id="t-waste-interval-label"></div>
-        <div class="wd-stepper">
-          <div class="wd-step-btn" onclick="wdStep('photo_interval',-1,2,100)">&minus;</div>
-          <div class="wd-step-val" id="waste-interval-val"></div>
-          <div class="wd-step-btn" onclick="wdStep('photo_interval',1,2,100)">+</div>
-        </div>
-      </div>
-
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-days-label"></div>
-        <div class="wd-stepper">
-          <div class="wd-step-btn" onclick="wdStep('days_before',-1,0,7)">&minus;</div>
-          <div class="wd-step-val" id="waste-days-val"></div>
-          <div class="wd-step-btn" onclick="wdStep('days_before',1,0,7)">+</div>
-        </div>
-      </div>
-
-      <div class="wd-group">
-        <div class="wd-check" id="waste-showday-check" onclick="wdToggleShowOnDay()">
-          <div class="wc-txt" id="t-waste-show-on-day"></div>
-          <div class="wc-box">&#10003;</div>
-        </div>
-      </div>
-
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-start-hour"></div>
-        <div class="wd-stepper">
-          <div class="wd-step-btn" onclick="wdStep('start_hour',-1,0,23)">&minus;</div>
-          <div class="wd-step-val" id="waste-hour-val"></div>
-          <div class="wd-step-btn" onclick="wdStep('start_hour',1,0,23)">+</div>
-        </div>
-      </div>
-
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-rules-label"></div>
-        <div id="waste-rule-list"></div>
-        <button class="wd-btn ghost" id="t-waste-add-rule" onclick="wdNewRule()"></button>
-        <button class="wd-btn ghost" id="t-wimp-open" onclick="wimpOpen()"></button>
-      </div>
-
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-preview"></div>
-        <div id="waste-preview-list"></div>
-      </div>
-
-      <div class="wd-status" id="waste-status"></div>
-      <button class="wd-btn primary" id="t-waste-save" onclick="wdSaveConfig()"></button>
-      <button class="wd-btn" id="t-waste-close" onclick="closeWasteDialog()"></button>
-    </div>
-
-    <!-- import harmonogramu -->
-    <div id="waste-import" style="display:none">
-      <div class="wimp-intro" id="t-wimp-intro"></div>
-      <input type="file" id="waste-import-file" accept=".pdf,.png,.jpg,.jpeg,image/*,application/pdf"
-             onchange="wimpUpload(this)">
-      <button class="wd-btn" id="t-wimp-pick"
-              onclick="document.getElementById('waste-import-file').click()"></button>
-      <div class="wd-status" id="wimp-status"></div>
-      <div id="wimp-result"></div>
-      <button class="wd-btn primary" id="t-wimp-add" style="display:none" onclick="wimpAdd()"></button>
-      <button class="wd-btn" id="t-wimp-cancel" onclick="wimpClose()"></button>
-    </div>
-
-    <!-- editor jedného zvozu -->
-    <div id="waste-editor" style="display:none">
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-type-label"></div>
-        <div class="wd-seg cols4" id="waste-type-seg"></div>
-      </div>
-
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-name-label"></div>
-        <input type="text" class="wd-input" id="waste-name-input" maxlength="40">
-      </div>
-
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-recurrence"></div>
-        <div class="wd-seg cols3" id="waste-kind-seg">
-          <div class="wd-opt" id="waste-kind-weekly"  onclick="wdSetKind('weekly')"></div>
-          <div class="wd-opt" id="waste-kind-monthly" onclick="wdSetKind('monthly')"></div>
-          <div class="wd-opt" id="waste-kind-dates"   onclick="wdSetKind('dates')"></div>
-        </div>
-      </div>
-
-      <!-- týždenné -->
-      <div id="waste-weekly-box">
-        <div class="wd-group">
-          <div class="wd-label" id="t-waste-weekday"></div>
-          <div class="wd-seg cols7" id="waste-weekday-seg"></div>
-        </div>
-        <div class="wd-group">
-          <div class="wd-label" id="t-waste-every-weeks"></div>
-          <div class="wd-stepper">
-            <div class="wd-step-btn" onclick="wdStepRule('interval_weeks',-1,1,12)">&minus;</div>
-            <div class="wd-step-val" id="waste-weeks-val"></div>
-            <div class="wd-step-btn" onclick="wdStepRule('interval_weeks',1,1,12)">+</div>
-          </div>
-        </div>
-        <div class="wd-group" id="waste-anchor-group">
-          <div class="wd-label" id="t-waste-anchor"></div>
-          <input type="date" class="wd-input" id="waste-anchor-input"
-                 placeholder="YYYY-MM-DD" onchange="wdReadAnchor()">
-          <div class="wd-hint" id="t-waste-anchor-hint"></div>
-        </div>
-      </div>
-
-      <!-- mesačné -->
-      <div id="waste-monthly-box" style="display:none">
-        <div class="wd-group">
-          <div class="wd-label" id="t-waste-monthly-by"></div>
-          <div class="wd-seg cols2" id="waste-by-seg">
-            <div class="wd-opt" id="waste-by-weekday" onclick="wdSetMonthlyBy('weekday')"></div>
-            <div class="wd-opt" id="waste-by-day"     onclick="wdSetMonthlyBy('day')"></div>
-          </div>
-        </div>
-        <div id="waste-by-weekday-box">
-          <div class="wd-group">
-            <div class="wd-label" id="t-waste-week-of-month"></div>
-            <select class="wd-select" id="waste-wom-select" onchange="wdReadWom()"></select>
-          </div>
-          <div class="wd-group">
-            <div class="wd-label" id="t-waste-weekday-2"></div>
-            <div class="wd-seg cols7" id="waste-weekday-seg2"></div>
-          </div>
-        </div>
-        <div class="wd-group" id="waste-by-day-box" style="display:none">
-          <div class="wd-label" id="t-waste-day-of-month"></div>
-          <div class="wd-stepper">
-            <div class="wd-step-btn" onclick="wdStepRule('day_of_month',-1,1,31)">&minus;</div>
-            <div class="wd-step-val" id="waste-dom-val"></div>
-            <div class="wd-step-btn" onclick="wdStepRule('day_of_month',1,1,31)">+</div>
-          </div>
-        </div>
-        <div class="wd-group">
-          <div class="wd-label" id="t-waste-months"></div>
-          <div class="wd-chips" id="waste-months-chips"></div>
-        </div>
-      </div>
-
-      <!-- konkrétne dátumy -->
-      <div id="waste-dates-box" style="display:none">
-        <div class="wd-group">
-          <div class="wd-label" id="t-waste-dates-label"></div>
-          <div class="wd-daterow">
-            <div class="wd-dcell"><input type="date" class="wd-input" id="waste-date-input" placeholder="YYYY-MM-DD"></div>
-            <div class="wd-dbtn"><button class="wd-btn" style="margin:0" id="t-waste-add-date"
-                 onclick="wdAddDate('dates')"></button></div>
-          </div>
-          <div class="wd-chips" id="waste-dates-chips" style="margin-top:10px"></div>
-        </div>
-      </div>
-
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-valid-from"></div>
-        <input type="date" class="wd-input" id="waste-from-input" placeholder="YYYY-MM-DD" onchange="wdReadRange()">
-      </div>
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-valid-to"></div>
-        <input type="date" class="wd-input" id="waste-to-input" placeholder="YYYY-MM-DD" onchange="wdReadRange()">
-      </div>
-
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-skip-label"></div>
-        <div class="wd-daterow">
-          <div class="wd-dcell"><input type="date" class="wd-input" id="waste-skip-input" placeholder="YYYY-MM-DD"></div>
-          <div class="wd-dbtn"><button class="wd-btn" style="margin:0" id="t-waste-add-skip"
-               onclick="wdAddDate('skip')"></button></div>
-        </div>
-        <div class="wd-chips" id="waste-skip-chips" style="margin-top:10px"></div>
-      </div>
-
-      <div class="wd-group">
-        <div class="wd-label" id="t-waste-extra-label"></div>
-        <div class="wd-daterow">
-          <div class="wd-dcell"><input type="date" class="wd-input" id="waste-extra-input" placeholder="YYYY-MM-DD"></div>
-          <div class="wd-dbtn"><button class="wd-btn" style="margin:0" id="t-waste-add-extra"
-               onclick="wdAddDate('extra')"></button></div>
-        </div>
-        <div class="wd-chips" id="waste-extra-chips" style="margin-top:10px"></div>
-      </div>
-
-      <button class="wd-btn primary" id="t-waste-rule-ok"     onclick="wdCommitRule()"></button>
-      <button class="wd-btn"         id="t-waste-rule-cancel" onclick="wdCancelRule()"></button>
-      <button class="wd-btn danger"  id="t-waste-rule-delete" onclick="wdDeleteRule()"></button>
-    </div>
-  </div>
-</div>
-
-<!-- VÝBERNÁ OBRAZOVKA -->
-<div id="screen-select">
-  <button class="settings-btn" onclick="openSettings()">&#9881;</button>
-  <div class="sel-title" id="t-app-title"></div>
-  <div class="sel-subtitle" id="t-app-subtitle"></div>
-  <div class="top-actions">
-    <button id="scan-btn" class="scan-btn" onclick="triggerScan()"></button>
-  </div>
-  <div class="order-label" id="t-order-label"></div>
-  <div class="order-row">
-    <button class="order-btn active" id="btn-order-date" onclick="setOrder('date')"></button>
-    <button class="order-btn"        id="btn-order-rand" onclick="setOrder('random')"></button>
-  </div>
-  <div class="album-list" id="album-list"></div>
-  <button class="upload-toggle" onclick="toggleUpload()" id="t-upload-toggle"></button>
-  <div id="upload-section">
-    <label class="upload-label" id="t-upload-album-label"></label>
-    <select id="upload-album" class="upload-select" onchange="onAlbumChange(this)">
-      <option value="" id="t-upload-root"></option>
-      <option value="__new__" id="t-upload-new-option"></option>
-    </select>
-    <input type="text" id="upload-new-album" class="upload-select"
-           style="display:none;margin-top:-6px" oninput="onNewAlbumInput(this)">
-    <label class="upload-label" id="t-upload-files-label"></label>
-    <button class="upload-file-btn" id="upload-file-btn"
-            onclick="document.getElementById('upload-files').click()"></button>
-    <input type="file" id="upload-files" multiple
-           accept=".heic,.heif,.jpg,.jpeg,.png,image/*"
-           onchange="onFilesSelected(this)">
-    <div class="upload-gps-hint" id="t-upload-gps-hint"></div>
-    <button class="upload-go-btn" id="upload-go-btn" onclick="startUpload()"></button>
-    <div class="upload-status" id="upload-status"></div>
-  </div>
-</div>
-
-<!-- SLIDESHOW -->
-<div id="screen-slideshow">
-  <div class="photo" id="photoA"></div>
-  <div class="photo" id="photoB"></div>
-  <div id="photo-counter"></div>
-  <div id="overlay">
-    <div id="overlay-date"></div>
-    <div id="overlay-location"></div>
-  </div>
-  <div id="waste-badge">
-    <div class="wb-row">
-      <div class="wb-ico" id="waste-badge-ico"></div>
-      <div class="wb-text">
-        <div class="wb-when" id="waste-badge-when"></div>
-        <div class="wb-what" id="waste-badge-what"></div>
-      </div>
-    </div>
-  </div>
-  <div id="waste-slide">
-    <div class="waste-when"  id="waste-slide-when"></div>
-    <div class="waste-icons" id="waste-slide-icons"></div>
-    <div class="waste-names" id="waste-slide-names"></div>
-    <div class="waste-accent" id="waste-slide-accent"></div>
-    <div class="waste-hint"  id="waste-slide-hint"></div>
-    <div class="waste-date"  id="waste-slide-date"></div>
-  </div>
-  <div id="weather-slide">
-    <div class="weather-hero">
-      <div class="weather-icon" id="weather-icon"></div>
-      <div class="weather-main">
-        <div class="weather-temp" id="weather-temp"></div>
-        <div class="weather-cond" id="weather-cond"></div>
-      </div>
-    </div>
-    <div class="weather-range" id="weather-range"></div>
-    <div class="weather-hourly" id="weather-hourly"></div>
-    <div class="weather-date" id="weather-date"></div>
-  </div>
-  <div id="ss-msg"></div>
-  <div id="delete-dialog">
-    <div class="del-box">
-      <div class="del-title" id="t-del-title"></div>
-      <div class="del-sub"   id="t-del-sub"></div>
-      <button class="del-yes" id="t-del-yes" onclick="confirmDelete()"></button>
-      <button class="del-no"  id="t-del-no"  onclick="hideDeleteDialog()"></button>
-    </div>
-  </div>
-</div>
-
-<script>
-// ── Injektované serverom ──────────────────────────────────────────────────────
-var TR               = __SNAPFRAME_TR__;
-var SLIDESHOW_SECS   = __SLIDESHOW_SECS__;
-var SLEEP_START      = "__SLEEP_START__";
-var SLEEP_END        = "__SLEEP_END__";
-var WEATHER_INTERVAL = __WEATHER_INTERVAL__;
-var WEEKDAYS         = __WEEKDAYS__;
-var WEEKDAYS_SHORT   = __WEEKDAYS_SHORT__;
-var MONTHS_LIST      = __MONTHS_LIST__;
-var WEEK_ORDINALS    = __WEEK_ORDINALS__;
-
-// ── i18n helpers ──────────────────────────────────────────────────────────────
-function tr(k)       { return TR[k] || k; }
-function trf(k, arr) {
-  var s = TR[k] || k;
-  for (var i = 0; i < arr.length; i++) { s = s.replace("{" + i + "}", arr[i]); }
-  return s;
-}
-
-// ── Naplň preložené texty do DOM ──────────────────────────────────────────────
-function applyTranslations() {
-  document.getElementById("t-app-title").textContent     = tr("app_title");
-  document.getElementById("t-app-subtitle").textContent  = tr("app_subtitle");
-  document.getElementById("scan-btn").textContent        = tr("scan_btn");
-  document.getElementById("t-order-label").textContent   = tr("order_label");
-  document.getElementById("btn-order-date").textContent  = tr("order_date");
-  document.getElementById("btn-order-rand").textContent  = tr("order_random");
-  document.getElementById("t-upload-toggle").textContent = tr("upload_toggle");
-  document.getElementById("t-upload-album-label").textContent = tr("upload_album_label");
-  document.getElementById("t-upload-root").textContent   = tr("upload_root");
-  document.getElementById("t-upload-new-option").textContent  = tr("upload_new_option");
-  document.getElementById("upload-new-album").placeholder     = tr("upload_new_ph");
-  document.getElementById("t-upload-files-label").textContent = tr("upload_files_label");
-  document.getElementById("upload-file-btn").textContent = tr("upload_select");
-  document.getElementById("t-upload-gps-hint").textContent = tr("upload_gps_hint");
-  document.getElementById("upload-go-btn").textContent   = tr("upload_go");
-  document.getElementById("ss-msg").textContent          = tr("no_photos");
-  document.getElementById("t-del-title").textContent     = tr("delete_title");
-  document.getElementById("t-del-sub").textContent       = tr("delete_sub");
-  document.getElementById("t-del-yes").textContent       = tr("delete_yes");
-  document.getElementById("t-del-no").textContent        = tr("delete_no");
-  document.getElementById("t-settings-title").textContent       = tr("settings_title");
-  document.getElementById("t-settings-sleep-label").textContent = tr("settings_sleep_label");
-  document.getElementById("t-theme-black").textContent          = tr("theme_black");
-  document.getElementById("t-theme-stars").textContent          = tr("theme_stars");
-  document.getElementById("t-settings-close").textContent       = tr("settings_close");
-  // — kalendár vývozu odpadu —
-  document.getElementById("t-waste-open-btn").textContent       = tr("waste_open_btn");
-  document.getElementById("t-waste-title").textContent          = tr("waste_title");
-  document.getElementById("t-waste-enabled-label").textContent  = tr("waste_enabled_label");
-  document.getElementById("waste-en-on").textContent            = tr("waste_on");
-  document.getElementById("waste-en-off").textContent           = tr("waste_off");
-  document.getElementById("t-waste-display-label").textContent  = tr("waste_display_label");
-  document.getElementById("waste-mode-overlay").textContent     = tr("waste_mode_overlay");
-  document.getElementById("waste-mode-slide").textContent       = tr("waste_mode_slide");
-  document.getElementById("waste-mode-both").textContent        = tr("waste_mode_both");
-  document.getElementById("t-waste-interval-label").textContent = tr("waste_interval_label");
-  document.getElementById("t-waste-days-label").textContent     = tr("waste_days_label");
-  document.getElementById("t-waste-show-on-day").textContent    = tr("waste_show_on_day");
-  document.getElementById("t-waste-start-hour").textContent     = tr("waste_start_hour");
-  document.getElementById("t-waste-rules-label").textContent    = tr("waste_rules_label");
-  document.getElementById("t-waste-add-rule").textContent       = tr("waste_add_rule");
-  document.getElementById("t-waste-preview").textContent        = tr("waste_preview");
-  document.getElementById("t-waste-save").textContent           = tr("waste_save");
-  document.getElementById("t-waste-close").textContent          = tr("settings_close");
-  document.getElementById("t-waste-type-label").textContent     = tr("waste_type_label");
-  document.getElementById("t-waste-name-label").textContent     = tr("waste_name_label");
-  document.getElementById("t-waste-recurrence").textContent     = tr("waste_recurrence");
-  document.getElementById("waste-kind-weekly").textContent      = tr("waste_kind_weekly");
-  document.getElementById("waste-kind-monthly").textContent     = tr("waste_kind_monthly");
-  document.getElementById("waste-kind-dates").textContent       = tr("waste_kind_dates");
-  document.getElementById("t-waste-weekday").textContent        = tr("waste_weekday");
-  document.getElementById("t-waste-weekday-2").textContent      = tr("waste_weekday");
-  document.getElementById("t-waste-every-weeks").textContent    = tr("waste_every_weeks");
-  document.getElementById("t-waste-anchor").textContent         = tr("waste_anchor");
-  document.getElementById("t-waste-anchor-hint").textContent    = tr("waste_anchor_hint");
-  document.getElementById("t-waste-monthly-by").textContent     = tr("waste_monthly_by");
-  document.getElementById("waste-by-weekday").textContent       = tr("waste_by_weekday");
-  document.getElementById("waste-by-day").textContent           = tr("waste_by_day");
-  document.getElementById("t-waste-week-of-month").textContent  = tr("waste_week_of_month");
-  document.getElementById("t-waste-day-of-month").textContent   = tr("waste_day_of_month");
-  document.getElementById("t-waste-months").textContent         = tr("waste_months");
-  document.getElementById("t-waste-dates-label").textContent    = tr("waste_dates_label");
-  document.getElementById("t-waste-add-date").textContent       = tr("waste_add_date");
-  document.getElementById("t-waste-add-skip").textContent       = tr("waste_add_date");
-  document.getElementById("t-waste-add-extra").textContent      = tr("waste_add_date");
-  document.getElementById("t-waste-valid-from").textContent     = tr("waste_valid_from");
-  document.getElementById("t-waste-valid-to").textContent       = tr("waste_valid_to");
-  document.getElementById("t-waste-skip-label").textContent     = tr("waste_skip_label");
-  document.getElementById("t-waste-extra-label").textContent    = tr("waste_extra_label");
-  document.getElementById("t-waste-rule-ok").textContent        = tr("waste_save");
-  document.getElementById("t-waste-rule-cancel").textContent    = tr("waste_cancel");
-  document.getElementById("t-waste-rule-delete").textContent    = tr("waste_delete");
-  // — import harmonogramu —
-  document.getElementById("t-wimp-open").textContent   = tr("wimp_open");
-  document.getElementById("t-wimp-intro").textContent  = tr("wimp_intro");
-  document.getElementById("t-wimp-pick").textContent   = tr("wimp_pick");
-  document.getElementById("t-wimp-add").textContent    = tr("wimp_add");
-  document.getElementById("t-wimp-cancel").textContent = tr("waste_cancel");
-}
-
-// ── Settings (sleep theme) ──────────────────────────────────────────────────
-var SLEEP_THEME_KEY = "snapframe_sleep_theme";
-var sleepTheme = "black";
-try {
-  var _saved = localStorage.getItem(SLEEP_THEME_KEY);
-  if (_saved === "black" || _saved === "stars") { sleepTheme = _saved; }
-} catch (e) {}
-
-function openSettings() {
-  document.getElementById("settings-dialog").style.display = "block";
-  _refreshThemeUI();
-}
-function closeSettings() {
-  document.getElementById("settings-dialog").style.display = "none";
-}
-function _refreshThemeUI() {
-  document.getElementById("theme-opt-black").className = "theme-opt" + (sleepTheme === "black" ? " active" : "");
-  document.getElementById("theme-opt-stars").className = "theme-opt" + (sleepTheme === "stars" ? " active" : "");
-}
-function chooseSleepTheme(theme) {
-  sleepTheme = theme;
-  try { localStorage.setItem(SLEEP_THEME_KEY, theme); } catch (e) {}
-  _refreshThemeUI();
-  var el = document.getElementById("screen-sleep");
-  el.className = "theme-" + theme;
-  if (theme === "stars" && !_starsBuilt) { buildStarfield(); }
-}
-
-// ── Star field ────────────────────────────────────────────────────────────────
-var _starsBuilt = false;
-var _meteorInterval = null;
-
-function buildStarfield() {
-  var svg = document.getElementById("starfield-svg");
-  if (!svg) { return; }
-  var w = window.innerWidth, h = window.innerHeight;
-  svg.setAttribute("viewBox", "0 0 " + w + " " + h);
-  var ns = "http://www.w3.org/2000/svg";
-  var frag = document.createDocumentFragment();
-  var count = Math.round((w * h) / 9000);
-  count = Math.max(70, Math.min(180, count));
-  for (var i = 0; i < count; i++) {
-    var x = Math.random() * w;
-    var y = Math.random() * h;
-    var sizeRoll = Math.random();
-    var r = sizeRoll > 0.94 ? (1.6 + Math.random() * 1.1)
-          : sizeRoll > 0.75 ? (1.0 + Math.random() * 0.6)
-          : (0.45 + Math.random() * 0.5);
-    var circle = document.createElementNS(ns, "circle");
-    circle.setAttribute("cx", x.toFixed(1));
-    circle.setAttribute("cy", y.toFixed(1));
-    circle.setAttribute("r", r.toFixed(2));
-    var willTwinkle = Math.random() < 0.55;
-    var cls = "sf-star" + (willTwinkle ? " twinkle" : "");
-    circle.setAttribute("class", cls);
-    var baseOpacity = 0.35 + Math.random() * 0.5;
-    if (willTwinkle) {
-      var dur = (2.4 + Math.random() * 3.6).toFixed(2);
-      var delay = (-1 * Math.random() * 6).toFixed(2);
-      circle.style.webkitAnimationDuration = dur + "s";
-      circle.style.animationDuration = dur + "s";
-      circle.style.webkitAnimationDelay = delay + "s";
-      circle.style.animationDelay = delay + "s";
-      circle.style.setProperty("--sf-min", Math.max(0.12, baseOpacity - 0.35).toFixed(2));
-      circle.style.setProperty("--sf-max", Math.min(1, baseOpacity + 0.4).toFixed(2));
-    } else {
-      circle.style.opacity = baseOpacity.toFixed(2);
-    }
-    frag.appendChild(circle);
-  }
-  svg.innerHTML = "";
-  svg.appendChild(frag);
-  _starsBuilt = true;
-}
-
-function _spawnMeteor() {
-  var host = document.getElementById("screen-sleep");
-  if (!host || sleepTheme !== "stars" || !_sleeping) { return; }
-  var m = document.createElement("div");
-  m.className = "sf-meteor";
-  m.style.left = (20 + Math.random() * 55) + "%";
-  m.style.top  = (5 + Math.random() * 25) + "%";
-  host.appendChild(m);
-  setTimeout(function() { if (m.parentNode) { m.parentNode.removeChild(m); } }, 3300);
-}
-
-function _startMeteorShowerLoop() {
-  if (_meteorInterval) { clearInterval(_meteorInterval); }
-  _meteorInterval = setInterval(function() {
-    if (Math.random() < 0.55) { _spawnMeteor(); }
-  }, 9000);
-}
-function _stopMeteorShowerLoop() {
-  if (_meteorInterval) { clearInterval(_meteorInterval); _meteorInterval = null; }
-}
-
-// ── Sleep mode ────────────────────────────────────────────────────────────────
-function _toMin(t) {
-  var p = t.split(":"); return parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
-}
-var _sleeping = false;
-
-function _startRefreshTimer() {
-  refreshTimer = setInterval(function() {
-    fetchPhotos(function(newList) {
-      if (!newList.length) { return; }
-      photos = newList;
-      if (currentIndex >= photos.length) { currentIndex = photos.length - 1; }
-    });
-  }, 5 * 60 * 1000);
-}
-
-function checkSleep() {
-  var el = document.getElementById("screen-sleep");
-  if (!SLEEP_START || !SLEEP_END) { el.style.display = "none"; return; }
-  var now = new Date();
-  var cur = now.getHours() * 60 + now.getMinutes();
-  var s   = _toMin(SLEEP_START);
-  var e   = _toMin(SLEEP_END);
-  var sleeping = (s < e) ? (cur >= s && cur < e) : (cur >= s || cur < e);
-  if (sleeping === _sleeping) { return; }
-  _sleeping = sleeping;
-  if (sleeping) {
-    el.className = "theme-" + sleepTheme;
-    el.style.display = "block";
-    if (sleepTheme === "stars") {
-      if (!_starsBuilt) { buildStarfield(); }
-      _startMeteorShowerLoop();
-    }
-    if (advanceTimer) { clearInterval(advanceTimer); advanceTimer = null; }
-    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
-    updateWasteBadge();
-  } else {
-    el.style.display = "none";
-    _stopMeteorShowerLoop();
-    if (slideshowActive && photos.length > 0) {
-      startAdvanceTimer();
-      _startRefreshTimer();
-    }
-    // po prebudení je už možno „zajtra“ – prepočítaj pripomienku
-    fetchWasteStatus();
-  }
-}
-setInterval(checkSleep, 60000);
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function xhrGet(url, cb) {
-  var xhr = new XMLHttpRequest();
-  xhr.open("GET", url, true);
-  xhr.onreadystatechange = function() {
-    if (xhr.readyState === 4) {
-      cb(xhr.status === 200 ? null : new Error("HTTP " + xhr.status), xhr.responseText);
-    }
-  };
-  xhr.send();
-}
-function escHtml(s) {
-  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-}
-function encodePath(p) {
-  var parts = p.split("/"), out = [];
-  for (var i = 0; i < parts.length; i++) { out.push(encodeURIComponent(parts[i])); }
-  return out.join("/");
-}
-
-// ── Scan trigger ──────────────────────────────────────────────────────────────
-function triggerScan() {
-  var btn = document.getElementById("scan-btn");
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/scan", true);
-  xhr.onreadystatechange = function() {
-    if (xhr.readyState !== 4) { return; }
-    btn.textContent = tr("scan_started");
-    btn.className = "scan-btn done";
-    setTimeout(function() {
-      btn.textContent = tr("scan_btn");
-      btn.className = "scan-btn";
-    }, 3000);
-  };
-  xhr.send();
-}
-
-// ── Výberná obrazovka ─────────────────────────────────────────────────────────
-var currentOrder = "date";
-var albumNames   = [];
-
-function setOrder(order) {
-  currentOrder = order;
-  document.getElementById("btn-order-date").className = (order === "date") ? "order-btn active" : "order-btn";
-  document.getElementById("btn-order-rand").className = (order === "random") ? "order-btn active" : "order-btn";
-}
-
-function loadAlbums() {
-  var listEl = document.getElementById("album-list");
-  listEl.innerHTML = "<div class='sel-empty'>" + escHtml(tr("loading_albums")) + "</div>";
-  xhrGet("/albums", function(err, text) {
-    if (err) {
-      listEl.innerHTML = "<div class='sel-empty'>" + escHtml(err.message) + "</div>";
-      return;
-    }
-    var data;
-    try { data = JSON.parse(text); } catch(e) { return; }
-    var albums = data.albums || [];
-    albumNames = [];
-    for (var i = 0; i < albums.length; i++) { albumNames.push(albums[i].name); }
-    var totalCount = 0;
-    for (var i = 0; i < albums.length; i++) { totalCount += (albums[i].count || 0); }
-    var html = "<button class='album-btn all-btn' onclick='startSlideshow(\"all\")'>"
-             + "<div class='album-btn-overlay'></div><div class='album-btn-inner'>"
-             + "<span class='album-icon all-icon'>&#9654;</span>"
-             + escHtml(tr("all_photos"))
-             + "<span class='album-count'>" + totalCount + "</span>"
-             + "</div></button>";
-    for (var i = 0; i < albums.length; i++) {
-      html += "<button class='album-btn' id='album-btn-" + i + "' onclick='startSlideshowIdx(" + i + ")'>"
-            + "<div class='album-btn-overlay'></div><div class='album-btn-inner'>"
-            + "<span class='album-icon'>&#128193;</span>"
-            + escHtml(albums[i].name)
-            + "<span class='album-count'>" + (albums[i].count || 0) + "</span>"
-            + "</div></button>";
-    }
-    if (albums.length === 0) {
-      html += "<div class='sel-empty'>" + escHtml(tr("no_albums")) + "</div>";
-    }
-    listEl.innerHTML = html;
-    loadAlbumCovers();
-    populateUploadAlbums(albums);
-  });
-}
-
-function loadAlbumCovers() {
-  for (var i = 0; i < albumNames.length; i++) {
-    (function(name, idx) {
-      var btn = document.getElementById("album-btn-" + idx);
-      if (!btn) { return; }
-      var img = new Image();
-      img.onload = function() {
-        btn.style.backgroundImage = "url('/album-cover/" + encodeURIComponent(name) + "')";
-      };
-      img.src = "/album-cover/" + encodeURIComponent(name);
-    })(albumNames[i], i);
-  }
-}
-
-function startSlideshowIdx(i) { startSlideshow(albumNames[i]); }
-
-function goBack() {
-  if (advanceTimer) { clearInterval(advanceTimer); advanceTimer = null; }
-  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
-  photos = []; currentIndex = -1; activeIsA = true;
-  var a = document.getElementById("photoA");
-  var b = document.getElementById("photoB");
-  a.style.backgroundImage = ""; a.className = "photo";
-  b.style.backgroundImage = ""; b.className = "photo";
-  document.getElementById("overlay-date").innerHTML     = "";
-  document.getElementById("overlay-location").innerHTML = "";
-  document.getElementById("photo-counter").innerHTML    = "";
-  hideWeatherSlide();
-  hideWasteSlide();
-  document.getElementById("waste-badge").className = "";
-  photosSinceWeather = 0;
-  photosSinceWaste   = 0;
-  slideshowActive = false;
-  document.getElementById("screen-slideshow").style.display = "none";
-  document.getElementById("screen-select").style.display    = "";
-  loadAlbums();
-}
-
-// ── Slideshow ─────────────────────────────────────────────────────────────────
-var photos = [], currentIndex = -1, activeIsA = true;
-var advanceTimer = null, refreshTimer = null, slideshowActive = false;
-var currentAlbum = "";
-var EFFECTS = ["fade", "zoomin", "zoomout", "slideleft", "slideup"];
-
-function startSlideshow(album) {
-  currentAlbum = album; slideshowActive = true;
-  document.getElementById("screen-select").style.display    = "none";
-  document.getElementById("screen-slideshow").style.display = "block";
-  document.getElementById("ss-msg").style.display           = "none";
-  fetchPhotosAndStart();
-  _startRefreshTimer();
-}
-
-function fetchPhotos(cb) {
-  xhrGet("/photos?album=" + encodeURIComponent(currentAlbum) + "&order=" + currentOrder,
-    function(err, text) {
-      if (err) { if (cb) { cb([]); } return; }
-      try { if (cb) { cb(JSON.parse(text).photos || []); } }
-      catch(e) { if (cb) { cb([]); } }
-    });
-}
-
-function fetchPhotosAndStart() {
-  fetchPhotos(function(list) {
-    photos = list;
-    if (!photos.length) {
-      document.getElementById("ss-msg").style.display = "block"; return;
-    }
-    currentIndex = 0; activeIsA = true;
-    showPhoto(0); startAdvanceTimer();
-  });
-}
-
-function pickEffect() { return EFFECTS[Math.floor(Math.random() * EFFECTS.length)]; }
-
-function showPhoto(index) {
-  if (!photos.length) { return; }
-  hideWeatherSlide();
-  hideWasteSlide();
-  var idx      = ((index % photos.length) + photos.length) % photos.length;
-  var filename = photos[idx];
-  var url      = "/thumb/" + encodePath(filename);
-  var nextEl   = activeIsA ? document.getElementById("photoB") : document.getElementById("photoA");
-  var prevEl   = activeIsA ? document.getElementById("photoA") : document.getElementById("photoB");
-  var effect   = pickEffect();
-  nextEl.style.backgroundImage = "url(" + url + ")";
-  nextEl.className = "photo " + effect + "-start";
-  setTimeout(function() {
-    nextEl.className = "photo visible " + effect + "-end";
-    prevEl.className = "photo";
-  }, 50);
-  activeIsA = !activeIsA;
-  document.getElementById("photo-counter").innerHTML = (idx + 1) + " / " + photos.length;
-  loadExifOverlay(filename);
-  updateWasteBadge();
-}
-
-function loadExifOverlay(filename) {
-  document.getElementById("overlay-date").innerHTML     = "";
-  document.getElementById("overlay-location").innerHTML = "";
-  xhrGet("/exif/" + encodePath(filename), function(err, text) {
-    if (err) { return; }
-    try {
-      var data = JSON.parse(text);
-      document.getElementById("overlay-date").innerHTML     = escHtml(data.date     || "");
-      document.getElementById("overlay-location").innerHTML = escHtml(data.location || "");
-    } catch(e) {}
-  });
-}
-
-function advanceTick() {
-  if (weatherModeActive && weatherData && photosSinceWeather >= WEATHER_INTERVAL) {
-    photosSinceWeather = 0;
-    photosSinceWaste++;
-    showWeatherSlide();
-    return;
-  }
-  if (wasteModeHas("slide") && currentWasteAlert() &&
-      photosSinceWaste >= (wasteCfg.photo_interval || 10)) {
-    photosSinceWaste = 0;
-    photosSinceWeather++;
-    showWasteSlide();
-    return;
-  }
-  photosSinceWeather++;
-  photosSinceWaste++;
-  currentIndex = (currentIndex + 1) % photos.length;
-  showPhoto(currentIndex);
-}
-
-function startAdvanceTimer() {
-  if (advanceTimer) { clearInterval(advanceTimer); }
-  advanceTimer = setInterval(advanceTick, SLIDESHOW_SECS * 1000);
-}
-
-// ── Weather mode ──────────────────────────────────────────────────────────────
-var weatherModeActive   = false;
-var weatherData         = null;
-var photosSinceWeather  = 0;
-
-var WEATHER_EMOJI = {
-  "sunny": "☀️", "clear-night": "🌙",
-  "partlycloudy": "⛅", "cloudy": "☁️",
-  "fog": "🌫️", "windy": "🌬️", "windy-variant": "🌬️",
-  "rainy": "🌧️", "pouring": "🌧️",
-  "lightning": "⛈️", "lightning-rainy": "⛈️",
-  "hail": "🧊", "snowy": "❄️", "snowy-rainy": "🌨️",
-  "exceptional": "⚠️"
-};
-
-function fetchWeatherStatus() {
-  xhrGet("/weather", function(err, text) {
-    if (err) { return; }
-    try {
-      var data = JSON.parse(text);
-      weatherModeActive = !!data.active;
-      weatherData = data.data || null;
-    } catch (e) {}
-  });
-}
-setInterval(fetchWeatherStatus, 60000);
-
-// Po otočení obrazovky (portrét <-> landscape) prekresli weather slide,
-// aby sa počet a rozloženie hodinových kariet prispôsobili orientácii.
-function _weatherIsVisible() {
-  return document.getElementById("weather-slide").className.indexOf("visible") !== -1;
-}
-window.addEventListener("resize", function() {
-  if (_weatherIsVisible() && weatherData) { showWeatherSlide(); }
-});
-
-function showWeatherSlide() {
-  var d = weatherData;
-  if (!d) { return; }
-  document.getElementById("weather-icon").textContent = WEATHER_EMOJI[d.condition] || "🌡️";
-  document.getElementById("weather-temp").textContent = (d.temperature != null) ? Math.round(d.temperature) + "°" : "--°";
-  document.getElementById("weather-cond").textContent = d.condition_label || "";
-  var parts = [];
-  if (d.forecast_high != null) {
-    parts.push(escHtml(tr("weather_high")) + " <span class=\"val\">" + Math.round(d.forecast_high) + "°</span>");
-  }
-  if (d.forecast_low != null) {
-    parts.push(escHtml(tr("weather_low")) + " <span class=\"val\">" + Math.round(d.forecast_low) + "°</span>");
-  }
-  document.getElementById("weather-range").innerHTML = parts.join("");
-  renderHourly(d.hourly);
-  document.getElementById("weather-date").textContent = new Date().toLocaleDateString();
-  document.getElementById("overlay-date").innerHTML     = "";
-  document.getElementById("overlay-location").innerHTML = "";
-  document.getElementById("photo-counter").innerHTML    = "";
-  document.getElementById("waste-badge").className      = "";
-  document.getElementById("weather-slide").className = "visible";
-}
-
-function renderHourly(hourly) {
-  var host = document.getElementById("weather-hourly");
-  if (!hourly || !hourly.length) { host.innerHTML = ""; host.style.display = "none"; return; }
-  host.style.display = "";
-  // Portrét (na výšku): hodiny sú riadky zhora dole. Landscape (na stene):
-  // 6 veľkých kariet vedľa seba. 6 položiek sa zmestí aj na telefón na výšku
-  // a ostáva všade veľké a čitateľné zďaleka. Rozloženie rieši CSS podľa orientácie.
-  var maxItems = 6;
-  var list = hourly;
-  if (list.length > maxItems) {
-    // Rovnomerne navzorkuj naprieč celým rozsahom vrátane prvej a poslednej hodiny.
-    var sampled = [];
-    for (var k = 0; k < maxItems; k++) {
-      sampled.push(list[Math.round(k * (list.length - 1) / (maxItems - 1))]);
-    }
-    list = sampled;
-  }
-  var html = "";
-  for (var j = 0; j < list.length; j++) {
-    var h = list[j];
-    var ico  = WEATHER_EMOJI[h.condition] || "🌡️";
-    var temp = (h.temperature != null) ? Math.round(h.temperature) + "°" : "--";
-    html += "<div class=\"weather-hour" + (j === 0 ? " now" : "") + "\">"
-          + "<div class=\"wh-time\">" + escHtml(h.time || "") + "</div>"
-          + "<div class=\"wh-ico\">" + ico + "</div>"
-          + "<div class=\"wh-temp\">" + escHtml(temp) + "</div>"
-          + "</div>";
-  }
-  host.innerHTML = html;
-}
-
-function hideWeatherSlide() {
-  document.getElementById("weather-slide").className = "";
-}
-
-// ── Kalendár vývozu odpadu: beh na fotorámiku ─────────────────────────────────
-var wasteCfg          = null;   // nastavenia zo /waste/status
-var wasteByDate       = {};     // "YYYY-MM-DD" -> [{id,label,icon,color}, ...]
-var wasteUpcoming     = [];     // surový zoznam pre náhľad v editore
-var photosSinceWaste  = 0;
-var wasteSlideVisible = false;
-
-function _pad2(n) { return (n < 10 ? "0" : "") + n; }
-
-// Lokálny ISO dátum (NIE toISOString – ten prepočíta na UTC a v CEST posunie deň).
-function _isoLocal(d) {
-  return d.getFullYear() + "-" + _pad2(d.getMonth() + 1) + "-" + _pad2(d.getDate());
-}
-
-function fetchWasteStatus() {
-  xhrGet("/waste/status", function(err, text) {
-    if (err) { return; }
-    try {
-      var data = JSON.parse(text);
-      wasteCfg      = data;
-      wasteUpcoming = data.upcoming || [];
-      wasteByDate   = {};
-      for (var i = 0; i < wasteUpcoming.length; i++) {
-        wasteByDate[wasteUpcoming[i].date] = wasteUpcoming[i].types || [];
-      }
-    } catch (e) { return; }
-    updateWasteBadge();
-  });
-}
-setInterval(fetchWasteStatus, 15 * 60 * 1000);
-
-// Ktorý najbližší termín (v rámci nastaveného predstihu) máme práve pripomínať.
-// „Dnešok“ určuje prehliadač na tablete – ten má správnu lokálnu časovú zónu.
-function currentWasteAlert() {
-  if (!wasteCfg || !wasteCfg.enabled) { return null; }
-  var now   = new Date();
-  var start = wasteCfg.show_on_day ? 0 : 1;
-  for (var off = start; off <= wasteCfg.days_before; off++) {
-    var d     = new Date(now.getFullYear(), now.getMonth(), now.getDate() + off);
-    var types = wasteByDate[_isoLocal(d)];
-    if (!types || !types.length) { continue; }
-    // deň-vopred pripomienku netlačiť skôr, než si používateľ praje
-    if (off >= 1 && now.getHours() < (wasteCfg.start_hour || 0)) { continue; }
-    return { days: off, date: _isoLocal(d), types: types };
-  }
-  return null;
-}
-
-function wasteModeHas(what) {
-  if (!wasteCfg) { return false; }
-  return wasteCfg.mode === what || wasteCfg.mode === "both";
-}
-
-function wasteWhenLabel(days) {
-  if (days === 0) { return tr("waste_today"); }
-  if (days === 1) { return tr("waste_tomorrow"); }
-  if (days <= 4)  { return trf("waste_in_days_few",  [days]); }
-  return trf("waste_in_days_many", [days]);
-}
-
-function wasteIcons(types) {
-  var out = "";
-  for (var i = 0; i < types.length; i++) { out += types[i].icon; }
-  return out;
-}
-
-function wasteNames(types) {
-  var out = [];
-  for (var i = 0; i < types.length; i++) { out.push(types[i].label); }
-  return out;
-}
-
-function _wasteFormatDate(iso) {
-  var p = iso.split("-");
-  var d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
-  return WEEKDAYS[(d.getDay() + 6) % 7] + " · " + d.toLocaleDateString();
-}
-
-function updateWasteBadge() {
-  var el = document.getElementById("waste-badge");
-  if (!el) { return; }
-  var a = currentWasteAlert();
-  if (!a || !wasteModeHas("overlay") || !slideshowActive ||
-      wasteSlideVisible || _weatherIsVisible() || _sleeping) {
-    el.className = ""; return;
-  }
-  document.getElementById("waste-badge-ico").innerHTML  = escHtml(wasteIcons(a.types));
-  document.getElementById("waste-badge-when").innerHTML = escHtml(wasteWhenLabel(a.days));
-  document.getElementById("waste-badge-what").innerHTML = escHtml(wasteNames(a.types).join(" · "));
-  el.style.borderLeftColor = a.types[0].color || "#9aa5b1";
-  el.className = "visible";
-}
-
-function showWasteSlide() {
-  var a = currentWasteAlert();
-  if (!a) { return; }
-  var names = wasteNames(a.types), html = "";
-  for (var i = 0; i < names.length; i++) {
-    if (i) { html += "<span class=\"wn-sep\"> · </span>"; }
-    html += escHtml(names[i]);
-  }
-  document.getElementById("waste-slide-icons").innerHTML = escHtml(wasteIcons(a.types));
-  document.getElementById("waste-slide-when").innerHTML  =
-      escHtml(wasteWhenLabel(a.days) + " · " + tr("waste_headline"));
-  document.getElementById("waste-slide-names").innerHTML = html;
-  document.getElementById("waste-slide-accent").style.background = a.types[0].color || "#7cb342";
-  document.getElementById("waste-slide-hint").innerHTML  =
-      escHtml(a.days === 0 ? tr("waste_hint_today") : tr("waste_hint"));
-  document.getElementById("waste-slide-date").innerHTML  = escHtml(_wasteFormatDate(a.date));
-  document.getElementById("overlay-date").innerHTML     = "";
-  document.getElementById("overlay-location").innerHTML = "";
-  document.getElementById("photo-counter").innerHTML    = "";
-  document.getElementById("waste-badge").className      = "";
-  document.getElementById("waste-slide").className      = "visible";
-  wasteSlideVisible = true;
-}
-
-function hideWasteSlide() {
-  document.getElementById("waste-slide").className = "";
-  wasteSlideVisible = false;
-}
-
-// ── Kalendár vývozu odpadu: editor ───────────────────────────────────────────
-var wdCfg      = null;   // pracovná kópia celého configu
-var wdTypes    = [];     // katalóg druhov odpadu zo servera
-var wdMaxRules = 40;
-var wdRule     = null;   // pracovná kópia práve editovaného pravidla
-var wdRuleIdx  = -1;     // index v wdCfg.rules, -1 = nové pravidlo
-
-function openWasteDialog() {
-  closeSettings();
-  document.getElementById("waste-dialog").style.display = "block";
-  document.getElementById("waste-main").style.display   = "block";
-  document.getElementById("waste-editor").style.display = "none";
-  document.getElementById("waste-import").style.display = "none";
-  document.getElementById("waste-dialog").scrollTop     = 0;
-  wdStatus("", "");
-  xhrGet("/waste/config", function(err, text) {
-    if (err) { wdStatus(tr("waste_save_err"), "err"); return; }
-    try {
-      var data   = JSON.parse(text);
-      wdCfg      = data.config || {};
-      wdTypes    = data.types  || [];
-      wdMaxRules = data.max_rules || 40;
-    } catch (e) { wdStatus(tr("waste_save_err"), "err"); return; }
-    if (!wdCfg.rules) { wdCfg.rules = []; }
-    wdRenderMain();
-  });
-}
-
-function closeWasteDialog() {
-  document.getElementById("waste-dialog").style.display = "none";
-  fetchWasteStatus();
-}
-
-function wdStatus(msg, cls) {
-  var el = document.getElementById("waste-status");
-  el.innerHTML = escHtml(msg || "");
-  el.className = "wd-status" + (cls ? " " + cls : "");
-}
-
-function _seg(id, active) {
-  var el = document.getElementById(id);
-  if (el) { el.className = "wd-opt" + (active ? " active" : ""); }
-}
-
-function wdSetEnabled(on) { wdCfg.enabled = !!on; wdRenderMain(); }
-function wdSetMode(m)     { wdCfg.mode = m;      wdRenderMain(); }
-
-function wdStep(key, delta, lo, hi) {
-  var v = (parseInt(wdCfg[key], 10) || 0) + delta;
-  if (v < lo) { v = lo; }
-  if (v > hi) { v = hi; }
-  wdCfg[key] = v;
-  if (key === "days_before" && v === 0) { wdCfg.show_on_day = true; }
-  wdRenderMain();
-}
-
-function wdToggleShowOnDay() {
-  if (wdCfg.days_before === 0) { return; }   // inak by sa nezobrazilo nikdy nič
-  wdCfg.show_on_day = !wdCfg.show_on_day;
-  wdRenderMain();
-}
-
-function wdRenderMain() {
-  _seg("waste-en-on",  wdCfg.enabled);
-  _seg("waste-en-off", !wdCfg.enabled);
-  _seg("waste-mode-overlay", wdCfg.mode === "overlay");
-  _seg("waste-mode-slide",   wdCfg.mode === "slide");
-  _seg("waste-mode-both",    wdCfg.mode === "both");
-  document.getElementById("waste-interval-group").style.display =
-      (wdCfg.mode === "overlay") ? "none" : "";
-  document.getElementById("waste-interval-val").innerHTML = wdCfg.photo_interval;
-  document.getElementById("waste-days-val").innerHTML     = wdCfg.days_before;
-  document.getElementById("waste-hour-val").innerHTML     = _pad2(wdCfg.start_hour) + ":00";
-  document.getElementById("waste-showday-check").className =
-      "wd-check" + (wdCfg.show_on_day ? " on" : "");
-  wdRenderRules();
-  wdRenderPreview();
-}
-
-function wdTypeInfo(id) {
-  for (var i = 0; i < wdTypes.length; i++) {
-    if (wdTypes[i].id === id) { return wdTypes[i]; }
-  }
-  return { id: id, label: id, icon: "♻️", color: "#9aa5b1" };
-}
-
-// Slovenčina skloňuje 1 / 2–4 / 5+ inak; ostatné jazyky použijú rovnaký tvar.
-function wdCountLabel(n) {
-  if (n === 1)              { return trf("waste_dates_one",  [n]); }
-  if (n >= 2 && n <= 4)     { return trf("waste_dates_few",  [n]); }
-  return trf("waste_dates_many", [n]);
-}
-
-function wdRuleSummary(rule) {
-  var rec = rule.recurrence || {}, out = "";
-  if (rec.kind === "weekly") {
-    var n = rec.interval_weeks || 1;
-    out = WEEKDAYS[rec.weekday || 0] + " · " +
-          (n === 1 ? tr("waste_every_week") : trf("waste_every_n_weeks", [n]));
-  } else if (rec.kind === "monthly") {
-    if (rec.monthly_by === "day") {
-      out = tr("waste_day_of_month") + ": " + (rec.day_of_month || 1) + ".";
-    } else {
-      out = WEEK_ORDINALS["" + (rec.week_of_month || 1)] + " " +
-            WEEKDAYS[rec.weekday || 0].toLowerCase();
-    }
-    if (rec.months && rec.months.length) {
-      var mm = [];
-      for (var i = 0; i < rec.months.length; i++) { mm.push(MONTHS_LIST[rec.months[i] - 1].substr(0, 3)); }
-      out += " (" + mm.join(", ") + ")";
-    }
-  } else {
-    out = wdCountLabel((rec.dates || []).length);
-  }
-  if ((rule.extra || []).length) { out += " +" + rule.extra.length; }
-  if ((rule.skip  || []).length) { out += " −" + rule.skip.length; }
-  return out;
-}
-
-function wdRenderRules() {
-  var host = document.getElementById("waste-rule-list");
-  var rules = wdCfg.rules || [];
-  if (!rules.length) {
-    host.innerHTML = "<div class=\"wd-empty\">" + escHtml(tr("waste_no_rules")) + "</div>";
-  } else {
-    var html = "";
-    for (var i = 0; i < rules.length; i++) {
-      var info = wdTypeInfo(rules[i].type);
-      var name = rules[i].label || info.label;
-      html += "<div class=\"wd-rule\" style=\"border-left-color:" + escHtml(info.color) + "\""
-            + " onclick=\"wdEditRule(" + i + ")\">"
-            + "<div class=\"wr-ico\">" + escHtml(info.icon) + "</div>"
-            + "<div class=\"wr-txt\"><div class=\"wr-name\">" + escHtml(name) + "</div>"
-            + "<div class=\"wr-sub\">" + escHtml(wdRuleSummary(rules[i])) + "</div></div>"
-            + "<div class=\"wr-go\">&#8250;</div></div>";
-    }
-    host.innerHTML = html;
-  }
-  var addBtn = document.getElementById("t-waste-add-rule");
-  addBtn.style.display = (rules.length >= wdMaxRules) ? "none" : "";
-}
-
-// Náhľad ukazuje ULOŽENÝ harmonogram (rozvinutý serverom), nie rozpracované zmeny.
-function wdRenderPreview() {
-  var host = document.getElementById("waste-preview-list");
-  if (!wasteUpcoming.length) {
-    host.innerHTML = "<div class=\"wd-empty\">" + escHtml(tr("waste_preview_none")) + "</div>";
-    return;
-  }
-  var todayIso = _isoLocal(new Date()), html = "", shown = 0;
-  for (var i = 0; i < wasteUpcoming.length && shown < 6; i++) {
-    if (wasteUpcoming[i].date < todayIso) { continue; }
-    shown++;
-    html += "<div class=\"wd-preview-day\"><div class=\"wp-date\">"
-          + escHtml(_wasteFormatDate(wasteUpcoming[i].date)) + "</div>"
-          + "<div class=\"wp-types\">"
-          + escHtml(wasteIcons(wasteUpcoming[i].types) + " " +
-                    wasteNames(wasteUpcoming[i].types).join(", "))
-          + "</div></div>";
-  }
-  host.innerHTML = shown ? html
-      : "<div class=\"wd-empty\">" + escHtml(tr("waste_preview_none")) + "</div>";
-}
-
-function wdSaveConfig() {
-  wdStatus("…", "");
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/waste/config", true);
-  xhr.setRequestHeader("Content-Type", "application/json");
-  xhr.onreadystatechange = function() {
-    if (xhr.readyState !== 4) { return; }
-    if (xhr.status !== 200) { wdStatus(tr("waste_save_err"), "err"); return; }
-    try {
-      var data = JSON.parse(xhr.responseText);
-      if (data.config) { wdCfg = data.config; if (!wdCfg.rules) { wdCfg.rules = []; } }
-    } catch (e) {}
-    wdStatus(tr("waste_saved"), "ok");
-    // po uložení si vypýtaj rozvinutý harmonogram, nech sedí náhľad aj rámik
-    xhrGet("/waste/status", function(err2, text2) {
-      if (!err2) {
-        try {
-          var st = JSON.parse(text2);
-          wasteCfg      = st;
-          wasteUpcoming = st.upcoming || [];
-          wasteByDate   = {};
-          for (var i = 0; i < wasteUpcoming.length; i++) {
-            wasteByDate[wasteUpcoming[i].date] = wasteUpcoming[i].types || [];
-          }
-        } catch (e2) {}
-      }
-      updateWasteBadge();
-      wdRenderMain();
-    });
-  };
-  xhr.send(JSON.stringify(wdCfg));
-}
-
-// ── Import harmonogramu ──────────────────────────────────────────────────────
-var wimpSeries = [];   // rady rozpoznané zo súboru
-var wimpYear   = 0;
-
-function wimpOpen() {
-  document.getElementById("waste-main").style.display   = "none";
-  document.getElementById("waste-import").style.display = "block";
-  document.getElementById("waste-dialog").scrollTop     = 0;
-  wimpReset();
-}
-
-function wimpClose() {
-  document.getElementById("waste-import").style.display = "none";
-  document.getElementById("waste-main").style.display   = "block";
-  document.getElementById("waste-dialog").scrollTop     = 0;
-  wimpReset();
-  wdRenderMain();
-}
-
-function wimpReset() {
-  wimpSeries = []; wimpYear = 0;
-  document.getElementById("wimp-result").innerHTML = "";
-  document.getElementById("waste-import-file").value = "";
-  document.getElementById("t-wimp-add").style.display = "none";
-  wimpStatus("", "");
-}
-
-function wimpStatus(msg, cls) {
-  var el = document.getElementById("wimp-status");
-  el.innerHTML = escHtml(msg || "");
-  el.className = "wd-status" + (cls ? " " + cls : "");
-}
-
-function wimpErrKey(code) {
-  if (code === "too_large")           { return "wimp_err_large"; }
-  if (code === "unsupported_format")  { return "wimp_err_format"; }
-  if (code === "no_api_key")          { return "wimp_err_novision"; }
-  if (code === "no_calendar_found" || code === "no_marks_found" ||
-      code === "pdf_parse_failed"     || code === "not_pdf") { return "wimp_err_parse"; }
-  return "wimp_err_generic";
-}
-
-function wimpUpload(input) {
-  if (!input.files || !input.files.length) { return; }
-  wimpStatus(tr("wimp_working"), "");
-  document.getElementById("wimp-result").innerHTML = "";
-  document.getElementById("t-wimp-add").style.display = "none";
-  var fd = new FormData();
-  fd.append("file", input.files[0]);
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/waste/import", true);
-  xhr.onreadystatechange = function() {
-    if (xhr.readyState !== 4) { return; }
-    var data = null;
-    try { data = JSON.parse(xhr.responseText); } catch (e) {}
-    if (!data || !data.ok) {
-      var code = data ? data.error : "";
-      // Ak parser neuspel a vision nie je k dispozícii, povedz to konkrétne.
-      if (data && data.vision_available === false && code !== "too_large") {
-        code = "no_api_key";
-      }
-      wimpStatus(tr(wimpErrKey(code)), "err");
-      return;
-    }
-    wimpSeries = data.series || [];
-    wimpYear   = data.year || 0;
-    for (var i = 0; i < wimpSeries.length; i++) {
-      wimpSeries[i].selected = false;
-      wimpSeries[i].type = wimpSeries[i].suggested_type || "other";
-    }
-    wimpStatus(tr(data.source === "vision" ? "wimp_via_vision" : "wimp_via_pdf"), "ok");
-    wimpRender();
-  };
-  xhr.send(fd);
-}
-
-function wimpRender() {
-  var host = document.getElementById("wimp-result");
-  if (!wimpSeries.length) { host.innerHTML = ""; return; }
-  var html = "<div class=\"wd-label\">"
-           + escHtml(trf("wimp_found", [wimpSeries.length, wimpYear])) + "</div>"
-           + "<div class=\"wimp-hint\">" + escHtml(tr("wimp_hint")) + "</div>";
-  for (var i = 0; i < wimpSeries.length; i++) {
-    var s = wimpSeries[i];
-    var sw = "background:" + escHtml(s.fill)
-           + (s.outline ? ";border-color:" + escHtml(s.outline) : "");
-    var sub = [];
-    if (s.summary) { sub.push(s.summary); }
-    sub.push(s.count + "\u00d7");
-    if (s.dates && s.dates.length) { sub.push(s.dates[0] + " \u2026 " + s.dates[s.dates.length - 1]); }
-    html += "<div class=\"wimp-serie" + (s.selected ? " on" : "") + "\" onclick=\"wimpToggle(" + i + ")\">"
-          + "<div class=\"ws-sw\"><div class=\"ws-chip\" style=\"" + sw + "\"></div></div>"
-          + "<div class=\"ws-txt\"><div class=\"ws-name\">"
-          + escHtml(s.colour_name || s.fill) + "</div>"
-          + "<div class=\"ws-sub\">" + escHtml(sub.join(" \u00b7 ")) + "</div></div>"
-          + "<div class=\"ws-box\">" + (s.selected ? "\u2713" : "\u25cb") + "</div></div>";
-    if (s.selected) {
-      html += "<select class=\"wimp-type\" onchange=\"wimpSetType(" + i + ",this.value)\">";
-      for (var j = 0; j < wdTypes.length; j++) {
-        html += "<option value=\"" + escHtml(wdTypes[j].id) + "\""
-              + (wdTypes[j].id === s.type ? " selected" : "") + ">"
-              + escHtml(wdTypes[j].icon + " " + wdTypes[j].label) + "</option>";
-      }
-      html += "</select>";
-    }
-  }
-  host.innerHTML = html;
-  var any = false;
-  for (var k = 0; k < wimpSeries.length; k++) { if (wimpSeries[k].selected) { any = true; } }
-  document.getElementById("t-wimp-add").style.display = any ? "" : "none";
-}
-
-function wimpToggle(i)      { wimpSeries[i].selected = !wimpSeries[i].selected; wimpRender(); }
-function wimpSetType(i, v)  { wimpSeries[i].type = v; }
-
-function wimpAdd() {
-  var added = 0;
-  for (var i = 0; i < wimpSeries.length; i++) {
-    var s = wimpSeries[i];
-    if (!s.selected || !s.dates || !s.dates.length) { continue; }
-    wdCfg.rules.push({
-      id: _newRuleId(), type: s.type, label: "",
-      recurrence: { kind: "dates", dates: s.dates.slice(0) },
-      from: "", to: "", skip: [], extra: []
-    });
-    added++;
-  }
-  if (!added) { wimpStatus(tr("wimp_none_selected"), "err"); return; }
-  // Import sám osebe nemá zmysel, kým je pripomienka vypnutá.
-  wdCfg.enabled = true;
-  wimpClose();
-  wdStatus(trf("wimp_added", [added]), "ok");
-}
-
-// ── Editor jedného zvozu ─────────────────────────────────────────────────────
-function _newRuleId() {
-  return "r" + Date.now().toString(36) + Math.floor(Math.random() * 1000).toString(36);
-}
-
-function wdNewRule() {
-  wdRuleIdx = -1;
-  wdRule = {
-    id: _newRuleId(), type: (wdTypes[0] ? wdTypes[0].id : "mixed"), label: "",
-    recurrence: { kind: "weekly", weekday: 0, interval_weeks: 1, anchor: "", months: [] },
-    from: "", to: "", skip: [], extra: []
-  };
-  wdOpenEditor();
-}
-
-function wdEditRule(idx) {
-  wdRuleIdx = idx;
-  var src = wdCfg.rules[idx];
-  var rec = src.recurrence || {};
-  wdRule = {
-    id: src.id || _newRuleId(), type: src.type, label: src.label || "",
-    recurrence: {
-      kind:           rec.kind || "weekly",
-      weekday:        rec.weekday || 0,
-      interval_weeks: rec.interval_weeks || 1,
-      anchor:         rec.anchor || "",
-      week_of_month:  rec.week_of_month || 1,
-      day_of_month:   rec.day_of_month || 1,
-      monthly_by:     rec.monthly_by || "weekday",
-      months:         (rec.months || []).slice(0),
-      dates:          (rec.dates  || []).slice(0)
-    },
-    from: src.from || "", to: src.to || "",
-    skip: (src.skip || []).slice(0), extra: (src.extra || []).slice(0)
-  };
-  wdOpenEditor();
-}
-
-function wdOpenEditor() {
-  document.getElementById("waste-main").style.display   = "none";
-  document.getElementById("waste-editor").style.display = "block";
-  document.getElementById("waste-dialog").scrollTop     = 0;
-  document.getElementById("t-waste-rule-delete").style.display = (wdRuleIdx < 0) ? "none" : "";
-  document.getElementById("waste-name-input").value  = wdRule.label || "";
-  document.getElementById("waste-from-input").value  = wdRule.from  || "";
-  document.getElementById("waste-to-input").value    = wdRule.to    || "";
-  document.getElementById("waste-anchor-input").value = wdRule.recurrence.anchor || "";
-  wdBuildTypeSeg();
-  wdBuildWeekdaySegs();
-  wdBuildWomSelect();
-  wdBuildMonthChips();
-  wdRenderEditor();
-}
-
-function wdBuildTypeSeg() {
-  var host = document.getElementById("waste-type-seg"), html = "";
-  for (var i = 0; i < wdTypes.length; i++) {
-    var t = wdTypes[i];
-    html += "<div class=\"wd-opt\" id=\"wd-type-" + escHtml(t.id) + "\""
-          + " onclick=\"wdSetType('" + escHtml(t.id) + "')\">"
-          + "<div style=\"font-size:24px;line-height:1.2\">" + escHtml(t.icon) + "</div>"
-          + "<div style=\"font-size:11px;margin-top:3px\">" + escHtml(t.label) + "</div></div>";
-  }
-  host.innerHTML = html;
-}
-
-function wdBuildWeekdaySegs() {
-  var html = "";
-  for (var i = 0; i < 7; i++) {
-    html += "<div class=\"wd-opt\" id=\"__PFX__" + i + "\" onclick=\"wdSetWeekday(" + i + ")\">"
-          + escHtml(WEEKDAYS_SHORT[i]) + "</div>";
-  }
-  document.getElementById("waste-weekday-seg").innerHTML  = html.replace(/__PFX__/g, "wd-wd-");
-  document.getElementById("waste-weekday-seg2").innerHTML = html.replace(/__PFX__/g, "wd-wd2-");
-}
-
-function wdBuildWomSelect() {
-  var sel = document.getElementById("waste-wom-select"), html = "";
-  var order = ["1", "2", "3", "4", "5", "-1"];
-  for (var i = 0; i < order.length; i++) {
-    html += "<option value=\"" + order[i] + "\">" + escHtml(WEEK_ORDINALS[order[i]]) + "</option>";
-  }
-  sel.innerHTML = html;
-}
-
-function wdBuildMonthChips() {
-  var host = document.getElementById("waste-months-chips"), html = "";
-  for (var m = 1; m <= 12; m++) {
-    html += "<div class=\"wd-chip month\" id=\"wd-month-" + m + "\" onclick=\"wdToggleMonth(" + m + ")\">"
-          + escHtml(MONTHS_LIST[m - 1].substr(0, 3)) + "</div>";
-  }
-  host.innerHTML = html;
-}
-
-function wdSetType(id)  { wdRule.type = id; wdRenderEditor(); }
-function wdSetKind(k)   { wdRule.recurrence.kind = k; wdRenderEditor(); }
-function wdSetWeekday(i){ wdRule.recurrence.weekday = i; wdRenderEditor(); }
-function wdSetMonthlyBy(v) { wdRule.recurrence.monthly_by = v; wdRenderEditor(); }
-function wdReadWom()    { wdRule.recurrence.week_of_month = parseInt(document.getElementById("waste-wom-select").value, 10); }
-function wdReadAnchor() { wdRule.recurrence.anchor = _wdCleanDate(document.getElementById("waste-anchor-input").value); }
-function wdReadRange()  {
-  wdRule.from = _wdCleanDate(document.getElementById("waste-from-input").value);
-  wdRule.to   = _wdCleanDate(document.getElementById("waste-to-input").value);
-}
-
-function wdStepRule(key, delta, lo, hi) {
-  var v = (parseInt(wdRule.recurrence[key], 10) || 0) + delta;
-  if (v < lo) { v = lo; }
-  if (v > hi) { v = hi; }
-  wdRule.recurrence[key] = v;
-  wdRenderEditor();
-}
-
-function wdToggleMonth(m) {
-  var arr = wdRule.recurrence.months || [], idx = -1;
-  for (var i = 0; i < arr.length; i++) { if (arr[i] === m) { idx = i; break; } }
-  if (idx >= 0) { arr.splice(idx, 1); } else { arr.push(m); arr.sort(function(a, b) { return a - b; }); }
-  wdRule.recurrence.months = arr;
-  wdRenderEditor();
-}
-
-function _wdCleanDate(v) {
-  v = (v || "").replace(/^\s+|\s+$/g, "");
-  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "";
-}
-
-function _wdListFor(which) {
-  return (which === "dates") ? (wdRule.recurrence.dates = wdRule.recurrence.dates || [])
-       : (which === "skip")  ? (wdRule.skip  = wdRule.skip  || [])
-                             : (wdRule.extra = wdRule.extra || []);
-}
-
-function wdAddDate(which) {
-  var input = document.getElementById("waste-" + (which === "dates" ? "date" : which) + "-input");
-  var v = _wdCleanDate(input.value);
-  if (!v) { return; }
-  var list = _wdListFor(which);
-  for (var i = 0; i < list.length; i++) { if (list[i] === v) { input.value = ""; return; } }
-  list.push(v);
-  list.sort();
-  input.value = "";
-  wdRenderEditor();
-}
-
-function wdRemoveDate(which, iso) {
-  var list = _wdListFor(which);
-  for (var i = 0; i < list.length; i++) {
-    if (list[i] === iso) { list.splice(i, 1); break; }
-  }
-  wdRenderEditor();
-}
-
-function _wdRenderChips(hostId, which, list) {
-  var host = document.getElementById(hostId), html = "";
-  for (var i = 0; i < list.length; i++) {
-    html += "<div class=\"wd-chip\" onclick=\"wdRemoveDate('" + which + "','" + escHtml(list[i]) + "')\">"
-          + escHtml(list[i]) + "<span class=\"wc-x\">&times;</span></div>";
-  }
-  host.innerHTML = html;
-}
-
-function wdRenderEditor() {
-  var rec = wdRule.recurrence;
-  for (var i = 0; i < wdTypes.length; i++) {
-    _seg("wd-type-" + wdTypes[i].id, wdTypes[i].id === wdRule.type);
-  }
-  _seg("waste-kind-weekly",  rec.kind === "weekly");
-  _seg("waste-kind-monthly", rec.kind === "monthly");
-  _seg("waste-kind-dates",   rec.kind === "dates");
-  document.getElementById("waste-weekly-box").style.display  = (rec.kind === "weekly")  ? "" : "none";
-  document.getElementById("waste-monthly-box").style.display = (rec.kind === "monthly") ? "" : "none";
-  document.getElementById("waste-dates-box").style.display   = (rec.kind === "dates")   ? "" : "none";
-
-  for (var w = 0; w < 7; w++) {
-    _seg("wd-wd-"  + w, w === rec.weekday);
-    _seg("wd-wd2-" + w, w === rec.weekday);
-  }
-  document.getElementById("waste-weeks-val").innerHTML = rec.interval_weeks || 1;
-  document.getElementById("waste-anchor-group").style.display = ((rec.interval_weeks || 1) > 1) ? "" : "none";
-
-  _seg("waste-by-weekday", rec.monthly_by !== "day");
-  _seg("waste-by-day",     rec.monthly_by === "day");
-  document.getElementById("waste-by-weekday-box").style.display = (rec.monthly_by === "day") ? "none" : "";
-  document.getElementById("waste-by-day-box").style.display     = (rec.monthly_by === "day") ? "" : "none";
-  document.getElementById("waste-wom-select").value = "" + (rec.week_of_month || 1);
-  document.getElementById("waste-dom-val").innerHTML = rec.day_of_month || 1;
-
-  var months = rec.months || [];
-  for (var m = 1; m <= 12; m++) {
-    var on = false;
-    for (var k = 0; k < months.length; k++) { if (months[k] === m) { on = true; break; } }
-    var chip = document.getElementById("wd-month-" + m);
-    if (chip) { chip.className = "wd-chip month" + (on ? " on" : ""); }
-  }
-
-  _wdRenderChips("waste-dates-chips", "dates", rec.dates || []);
-  _wdRenderChips("waste-skip-chips",  "skip",  wdRule.skip  || []);
-  _wdRenderChips("waste-extra-chips", "extra", wdRule.extra || []);
-}
-
-function wdCommitRule() {
-  var rec = wdRule.recurrence;
-  wdRule.label = document.getElementById("waste-name-input").value.replace(/^\s+|\s+$/g, "");
-  wdReadRange();
-  if (rec.kind === "weekly") {
-    wdReadAnchor();
-    // bez referenčného dátumu sa fáza „každý N-tý týždeň“ nedá určiť
-    if ((rec.interval_weeks || 1) > 1 && !rec.anchor) {
-      document.getElementById("waste-anchor-input").focus();
-      return;
-    }
-  } else if (rec.kind === "dates") {
-    if (!(rec.dates || []).length && !(wdRule.extra || []).length) {
-      document.getElementById("waste-date-input").focus();
-      return;
-    }
-  }
-  if (wdRuleIdx < 0) { wdCfg.rules.push(wdRule); }
-  else               { wdCfg.rules[wdRuleIdx] = wdRule; }
-  wdCloseEditor();
-}
-
-function wdCancelRule() { wdCloseEditor(); }
-
-function wdDeleteRule() {
-  if (wdRuleIdx >= 0) { wdCfg.rules.splice(wdRuleIdx, 1); }
-  wdCloseEditor();
-}
-
-function wdCloseEditor() {
-  wdRule = null; wdRuleIdx = -1;
-  document.getElementById("waste-editor").style.display = "none";
-  document.getElementById("waste-main").style.display   = "block";
-  document.getElementById("waste-dialog").scrollTop     = 0;
-  wdStatus("", "");
-  wdRenderMain();
-}
-
-// ── Swipe + dlhý tap ──────────────────────────────────────────────────────────
-var swipeTouchStartX = 0, swipeTouchStartY = 0;
-var longPressTimer = null, longPressFired = false;
-
-document.addEventListener("touchstart", function(e) {
-  swipeTouchStartX = e.touches[0].clientX;
-  swipeTouchStartY = e.touches[0].clientY;
-  longPressFired = false;
-  if (slideshowActive) {
-    longPressTimer = setTimeout(function() {
-      longPressFired = true; showDeleteDialog();
-    }, 750);
-  }
-}, false);
-
-document.addEventListener("touchmove", function(e) {
-  if (!longPressTimer) { return; }
-  if (Math.abs(e.touches[0].clientX - swipeTouchStartX) > 10 ||
-      Math.abs(e.touches[0].clientY - swipeTouchStartY) > 10) {
-    clearTimeout(longPressTimer); longPressTimer = null;
-  }
-}, false);
-
-document.addEventListener("touchend", function(e) {
-  if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
-  if (longPressFired || !slideshowActive) { return; }
-  var dx = e.changedTouches[0].clientX - swipeTouchStartX;
-  var dy = e.changedTouches[0].clientY - swipeTouchStartY;
-  if (Math.abs(dy) > 80 && Math.abs(dx) < 80) { goBack(); return; }
-  if (dx > 80 && Math.abs(dy) < 60) {
-    if (advanceTimer) { clearInterval(advanceTimer); }
-    currentIndex = ((currentIndex - 1) + photos.length) % photos.length;
-    showPhoto(currentIndex); startAdvanceTimer(); return;
-  }
-  if (dx < -80 && Math.abs(dy) < 60) {
-    if (advanceTimer) { clearInterval(advanceTimer); }
-    currentIndex = (currentIndex + 1) % photos.length;
-    showPhoto(currentIndex); startAdvanceTimer();
-  }
-}, false);
-
-// ── Mazanie ───────────────────────────────────────────────────────────────────
-function showDeleteDialog()  { document.getElementById("delete-dialog").style.display = "block"; }
-function hideDeleteDialog()  { document.getElementById("delete-dialog").style.display = "none"; }
-
-function confirmDelete() {
-  hideDeleteDialog();
-  if (!photos.length) { return; }
-  var filename = photos[currentIndex];
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/delete/" + encodePath(filename), true);
-  xhr.onreadystatechange = function() {
-    if (xhr.readyState !== 4 || xhr.status !== 200) { return; }
-    photos.splice(currentIndex, 1);
-    if (!photos.length) {
-      document.getElementById("photoA").className = "photo";
-      document.getElementById("photoB").className = "photo";
-      document.getElementById("photo-counter").innerHTML = "";
-      document.getElementById("ss-msg").style.display = "block"; return;
-    }
-    currentIndex = currentIndex % photos.length;
-    document.getElementById("photoA").className = "photo";
-    document.getElementById("photoB").className = "photo";
-    activeIsA = true; showPhoto(currentIndex);
-  };
-  xhr.send();
-}
-
-// ── Upload ────────────────────────────────────────────────────────────────────
-function toggleUpload() {
-  var sec = document.getElementById("upload-section");
-  sec.style.display = (sec.style.display === "none" || !sec.style.display) ? "block" : "none";
-}
-
-function populateUploadAlbums(albums) {
-  var sel = document.getElementById("upload-album");
-  while (sel.options.length > 2) { sel.remove(1); }
-  for (var i = 0; i < albums.length; i++) {
-    var opt = document.createElement("option");
-    opt.value = albums[i].name; opt.textContent = albums[i].name;
-    sel.insertBefore(opt, sel.options[sel.options.length - 1]);
-  }
-}
-
-function onAlbumChange(sel) {
-  var newInput = document.getElementById("upload-new-album");
-  if (sel.value === "__new__") {
-    newInput.style.display = "block"; newInput.focus();
-  } else {
-    newInput.style.display = "none"; newInput.value = "";
-  }
-}
-
-function onNewAlbumInput(input) {
-  var v = "", s = input.value;
-  for (var i = 0; i < s.length; i++) {
-    var c = s[i];
-    if (c !== "/" && c !== "\\") { v += c; }
-  }
-  input.value = v;
-}
-
-function _getTargetAlbum() {
-  var sel = document.getElementById("upload-album");
-  if (sel.value === "__new__") {
-    return document.getElementById("upload-new-album").value.trim();
-  }
-  return sel.value;
-}
-
-function onFilesSelected(input) {
-  var btn = document.getElementById("upload-file-btn");
-  if (input.files && input.files.length > 0) {
-    btn.className = "upload-file-btn has-files";
-    btn.textContent = trf("upload_selected", [input.files.length]);
-  } else {
-    btn.className = "upload-file-btn";
-    btn.textContent = tr("upload_select");
-  }
-  document.getElementById("upload-status").innerHTML = "";
-  document.getElementById("upload-status").className = "upload-status";
-}
-
-function startUpload() {
-  var input  = document.getElementById("upload-files");
-  var status = document.getElementById("upload-status");
-  if (!input.files || !input.files.length) {
-    status.innerHTML = tr("upload_err_files"); status.className = "upload-status err"; return;
-  }
-  var album = _getTargetAlbum();
-  if (document.getElementById("upload-album").value === "__new__" && !album) {
-    status.innerHTML = tr("upload_err_name"); status.className = "upload-status err"; return;
-  }
-  document.getElementById("upload-go-btn").disabled = true;
-  _uploadNext(input.files, 0, album, 0);
-}
-
-function _uploadNext(files, idx, album, errCount) {
-  var status = document.getElementById("upload-status");
-  if (idx >= files.length) {
-    var msg = trf("upload_done", [files.length]);
-    if (errCount > 0) { msg += " " + trf("upload_errors", [errCount]); }
-    status.innerHTML = msg;
-    status.className = "upload-status " + (errCount > 0 ? "err" : "ok");
-    document.getElementById("upload-go-btn").disabled = false;
-    document.getElementById("upload-files").value = "";
-    document.getElementById("upload-file-btn").className   = "upload-file-btn";
-    document.getElementById("upload-file-btn").textContent = tr("upload_select");
-    loadAlbums(); return;
-  }
-  status.className = "upload-status";
-  status.innerHTML = trf("upload_progress", [idx + 1, files.length, escHtml(files[idx].name)]);
-  var fd = new FormData();
-  fd.append("file", files[idx]); fd.append("album", album);
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/upload", true);
-  xhr.onreadystatechange = function() {
-    if (xhr.readyState !== 4) { return; }
-    _uploadNext(files, idx + 1, album, errCount + (xhr.status === 200 ? 0 : 1));
-  };
-  xhr.send(fd);
-}
-
-// ── Štart ─────────────────────────────────────────────────────────────────────
-applyTranslations();
-checkSleep();
-loadAlbums();
-fetchWeatherStatus();
-fetchWasteStatus();
-</script>
-</body>
-</html>"""
+    """Stránka rámu. HTML/CSS/JS sú súbory v /usr/share/snapframe – do stránky
+    sa vkladá len konfigurácia, takže CSS a JS si prehliadač môže nakešovať
+    natrvalo (menia sa len s ?v=<verzia assetov>)."""
     lang = LANGUAGE if LANGUAGE in TRANSLATIONS else "sk"
-    html = html.replace("__SNAPFRAME_TR__",  json_module.dumps(TRANSLATIONS[lang], ensure_ascii=False))
-    html = html.replace("__SLIDESHOW_SECS__", str(SLIDESHOW_SECS))
-    html = html.replace("__SLEEP_START__",    SLEEP_START)
-    html = html.replace("__SLEEP_END__",      SLEEP_END)
-    html = html.replace("__WEATHER_INTERVAL__", str(WEATHER_PHOTO_INTERVAL))
-    html = html.replace("__WEEKDAYS__",       json_module.dumps(WEEKDAYS[lang], ensure_ascii=False))
-    html = html.replace("__WEEKDAYS_SHORT__", json_module.dumps(WEEKDAYS_SHORT[lang], ensure_ascii=False))
-    html = html.replace("__MONTHS_LIST__",    json_module.dumps(MONTHS[lang], ensure_ascii=False))
-    html = html.replace("__WEEK_ORDINALS__",  json_module.dumps(WEEK_ORDINALS[lang], ensure_ascii=False))
+    cfg = {
+        "tr":               TRANSLATIONS[lang],
+        "slideshow_secs":   SLIDESHOW_SECS,
+        "sleep_start":      SLEEP_START,
+        "sleep_end":        SLEEP_END,
+        "weather_interval": WEATHER_PHOTO_INTERVAL,
+        "weekdays":         WEEKDAYS[lang],
+        "weekdays_short":   WEEKDAYS_SHORT[lang],
+        "months":           MONTHS[lang],
+        "week_ordinals":    WEEK_ORDINALS[lang],
+    }
+    html = _read_index_html()
+    html = html.replace("__SNAPFRAME_CFG__", json_module.dumps(cfg, ensure_ascii=False))
+    html = html.replace("__ASSET_V__", ASSET_VERSION)
     resp = Response(html, mimetype="text/html; charset=utf-8")
-    # Nekešuj HTML (obsahuje všetok CSS/JS) – nástenný displej tak vždy dostane
-    # aktuálnu verziu po update/rebuild bez ručného čistenia cache v Safari.
+    # Samotné HTML sa nekešuje – nástenný displej tak po update dostane nové
+    # ?v= na CSS/JS bez ručného čistenia cache v Safari.
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Pragma"]        = "no-cache"
     resp.headers["Expires"]       = "0"
@@ -3591,14 +1356,13 @@ fetchWasteStatus();
 # ── Thumbnail pregenerácia ────────────────────────────────────────────────────
 
 def pregenerate_thumbs():
-    HIDDEN = {"_kos", "_thumbs"}
     folder = Path(OUTPUT_FOLDER)
     if not folder.exists():
         return
     all_photos = [
         f for f in folder.rglob("*")
         if f.is_file() and f.suffix.lower() in ALLOWED_EXT
-        and not any(p in HIDDEN for p in f.relative_to(folder).parts)
+        and not any(p in HIDDEN_DIRS for p in f.relative_to(folder).parts)
     ]
     total = len(all_photos)
     if not total:
@@ -3607,28 +1371,38 @@ def pregenerate_thumbs():
     if _has_state:
         _state.thumb_start(total)
     done = 0; skipped = 0
+    thumb_dir = _thumb_root() / str(THUMB_MAX_PX)
     for src in all_photos:
-        filename  = str(src.relative_to(folder))
-        thumb_path = folder / "_thumbs" / filename
+        filename   = str(src.relative_to(folder))
+        thumb_path = thumb_dir / (filename + ".jpg")
         try:
             if thumb_path.exists() and thumb_path.stat().st_mtime >= src.stat().st_mtime:
+                _photo_meta(src)
                 skipped += 1; done += 1
                 if _has_state: _state.thumb_progress(done)
                 continue
         except OSError:
             pass
         _get_or_create_thumb(filename)
+        _photo_meta(src)              # index sa plní tu, nie pri prvom /photos
         done += 1
         if _has_state: _state.thumb_progress(done)
         if done % 50 == 0:
             log.info("Thumbnaile: {}/{} ({} preskočených)".format(done, total, skipped))
     if _has_state:
         _state.thumb_finish()
+    if _has_index:
+        base = folder.resolve()
+        removed = _index.prune({str(f.resolve().relative_to(base)) for f in all_photos})
+        if removed:
+            log.info("Index: odstránených {} zmazaných fotiek".format(removed))
     log.info("Thumbnaile hotové: {}/{} ({} preskočených)".format(done, total, skipped))
 
 
 def run_web_server():
     _load_geocode_cache()
+    if _has_index and _index.init():
+        log.info("Index fotiek: {}".format(_index.DB_FILE))
     log.info("Spúšťam SnapFrame web server – port: {}, jazyk: {}, sleep: {} – {}".format(
         WEB_PORT, LANGUAGE, SLEEP_START or "off", SLEEP_END or "off"))
     log.info("Weather mode: interval {} fotiek, trvanie {} min po aktivácii".format(

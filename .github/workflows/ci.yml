@@ -68,15 +68,32 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install dependencies
+        run: pip install --quiet -r tests/requirements.txt ruff
       - name: Syntax check
         run: python -m compileall -q snapframe/rootfs/usr/bin
-      - name: Ruff (syntax errors and undefined names)
-        run: |
-          pip install --quiet ruff
-          ruff check --select E9,F63,F7,F82 --target-version py312 \
-            snapframe/rootfs/usr/bin
+      - name: Ruff
+        run: ruff check --config ruff.toml snapframe/rootfs/usr/bin tests
       - name: Unit tests
         run: python -m unittest discover -s tests -v
+      - name: No test may silently skip in CI
+        run: |
+          python -m unittest discover -s tests 2>&1 | tee /tmp/tests.log
+          if grep -q "skipped=" /tmp/tests.log; then
+            echo "::error::Testy sa preskočili – chýba závislosť v tests/requirements.txt"
+            exit 1
+          fi
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Syntax check app.js
+        run: node --check snapframe/rootfs/usr/share/snapframe/static/app.js
 
   build:
     name: Build ${{ matrix.arch }}

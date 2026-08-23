@@ -1,0 +1,4 @@
+# Závislosti len pre testy. reportlab generuje PDF harmonogramy, na ktorých
+# sa overuje parser – bez neho sa tie testy ticho preskočia.
+-r ../snapframe/requirements.txt
+reportlab==5.0.1

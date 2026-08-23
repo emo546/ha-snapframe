@@ -108,7 +108,7 @@ def _is_background(rgb):
 def _colour_hint(rgb):
     best, best_d = ("other", ""), 9.0
     for ref, type_id, name in COLOUR_HINTS:
-        d = sum((a - b) ** 2 for a, b in zip(ref, rgb))
+        d = sum((a - b) ** 2 for a, b in zip(ref, rgb, strict=True))
         if d < best_d:
             best, best_d = (type_id, name), d
     return best if best_d < 0.25 else ("other", "")
@@ -211,7 +211,7 @@ def _grid_pitch(cells):
     ys = sorted({round((w["top"] + w["bottom"]) / 2.0, 1) for _, w in cells})
 
     def pitch(vals, fallback):
-        gaps = [b - a for a, b in zip(vals, vals[1:]) if 3.0 < b - a < 80.0]
+        gaps = [b - a for a, b in zip(vals, vals[1:], strict=False) if 3.0 < b - a < 80.0]
         if not gaps:
             return fallback
         gaps.sort()

@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.0] – 2026
+
+### Security
+
+- **URL paths could reach outside the photo library.** Flask's `<path:>` converter hands `../..` (and its `%2e%2e` form) straight to the handler, so every route that built a filesystem path from the URL could step out of `output_folder`: `POST /delete/<path>` renamed the target into `_kos/`, `/thumb/<path>` wrote a JPEG next to it, and `/exif/<path>` read it. `/photo/<path>` was safe only because `send_from_directory` does its own `safe_join`. All of them now resolve through one helper that rejects anything outside the library, album names from the URL and from the upload form are reduced to a single folder name, and the regression tests cover each escape form.
+- **New `api_token` option protects everything that writes.** Uploading, deleting, triggering a scan, saving or importing the waste calendar and pushing weather data required no credentials at all unless Basic Auth was on — and Basic Auth is off by default, which left those endpoints open to anyone who could reach the port. Set `api_token` and those calls need `X-SnapFrame-Token`; reading stays open so the frame still needs no login, and the app asks for the token only when a write comes back 401. Add-ons log a warning at startup when the token is unset.
+- Basic Auth now compares credentials with `hmac.compare_digest` instead of `==`.
+- Python dependencies are pinned (`snapframe/requirements.txt`). The add-on is built on the user's own device, so an unpinned dependency could break installs at any time without a single change in this repo.
+
+### Added
+
+- **Home Assistant ingress** – the add-on now offers a protected UI inside Home Assistant (Open Web UI / sidebar panel), while the mapped port stays available for the tablets. Every request the page makes is relative to the page, so both routes work unchanged.
+- **MQTT discovery** – with the Mosquitto add-on running, SnapFrame publishes the next waste collection (with `days_until` and the waste types as attributes), the photo count, the last scan time and whether weather mode is active. The entities appear on their own; no hand-written REST sensor in `configuration.yaml`. Off when no broker is configured (`mqtt_enabled`, plus manual `mqtt_host`/`mqtt_port`/`mqtt_username`/`mqtt_password` for a broker outside HA).
+- **Health check** – a Docker `HEALTHCHECK` probes the new unauthenticated `GET /health`, so the Supervisor restarts a frozen add-on instead of leaving it to quietly serve nothing. The probe is deliberately exempt from Basic Auth: it has no credentials, and a 401 would restart-loop the add-on. (The `watchdog:` config key would have been the obvious place for this, but it is obsolete and the add-on linter rejects it.)
+- **CIFS mount watchdog** – `run.sh` mounted the share once at startup and never looked again, so a NAS that went away left the add-on running blind. A background check every minute verifies both that the mount exists and that it can actually be read (a dead server leaves the mount entry behind) and remounts. The password is written to a credentials file per attempt and shredded straight after.
+- **`smb_version` option** – SMB 3.0 was hard-coded; older NAS boxes and Windows shares need 2.1 or 1.0.
+- **Prebuilt images** – a release workflow builds both architectures and pushes them to GHCR, so an update no longer means minutes of compiling on a Raspberry Pi. Turn it on by uncommenting the `image:` line in `config.yaml` once the workflow has published the current version.
+- **Translated options** – `translations/{en,sk,de}.yaml` name and describe all 29 options in the add-on configuration screen, instead of showing bare field names.
+- `thumb_cache` option (`addon` / `share`) and a `?w=` parameter on `/thumb/<path>`.
+
+### Changed
+
+- **Photo metadata is indexed in `/data` instead of being re-read over the network.** `/photos` sorts by EXIF date, which meant opening every photo — over CIFS, on every request, for every tablet, every five minutes. The in-memory LRU held 250 entries, which a library of a few thousand photos thrashes completely, and a restart emptied it anyway. A SQLite index now holds the date and GPS per photo, keyed by path and mtime, filled by the background pass that already walks every file; a listing is one query plus a stat per file. `/exif` reads from the same index and remembers the geocoded place name. If `/data` is unwritable the add-on silently falls back to the old behaviour.
+- **Thumbnails moved out of the photo library into `/data`** – on the share they were read and written over the network and cluttered the user's photo folder. They are also always written as JPEG (a thumbnail of a `.png` used to be served as `image/png` with JPEG bytes inside), and are generated in several widths so a Retina iPad can ask for the size it actually displays instead of upscaling 1024 px. `thumb_cache: share` restores the old location for libraries larger than the free space on the HA disk; the old `output_folder/_thumbs/` folder can be deleted by hand.
+- **The frame survives a slow share and a restart.** The transition used to start before the photo was fetched, so a slow share faded in an empty frame; each photo is now preloaded and the next one is fetched while the current is on screen. A single failed request used to leave the frame frozen until someone reloaded it by hand; requests now retry with backoff and a small notice appears while the server is unreachable. The page also reloads itself once a day (during night mode when one is configured), which clears the memory drift of a browser open for months and picks up add-on updates.
+- **The scan no longer waits 5 seconds per file.** The check that a file is fully copied ran unconditionally on every file, so 500 new photos meant over 40 minutes of waiting alone. Files whose mtime is older than two minutes are not being uploaded any more and are converted straight away.
+- **The page is no longer a 2450-line string inside `webserver.py`.** HTML, CSS and JS live in `/usr/share/snapframe`; only the language pack and a handful of config values are injected. The page itself stays uncached, but CSS and JS are now static files the browser keeps, invalidated by a `?v=` derived from the asset mtimes — a reload used to pull the whole UI again every time.
+- `/thumb`, `/photo` and `/album-cover` send cache headers, so a wall display stops re-fetching the same photo every cycle.
+- Image files are closed after reading EXIF and after writing a thumbnail; at a few thousand photos the leaked handles were real.
+
+### Fixed
+
+- A thumbnail whose source could not be read no longer falls back to a path built from the raw URL.
+- `zip()` in the schedule parser is explicit about length mismatches.
+
+### Development
+
+- Unit tests for the web layer (path traversal, auth and the token gate, uploads, the index, thumbnails) and for MQTT discovery — 78 tests in total.
+- A test fails the build if an option is added to `config.yaml` without a schema entry or a translation in every language, or if the watchdog is ever pointed at an authenticated route.
+- Ruff runs a curated rule set (E4/E7/E9/F/W/B) at the project's real line length instead of four rules, CI lints `app.js`, and Dependabot watches the actions and the pinned dependencies.
+
 ## [2.11.0] – 2026
 
 ### Added
