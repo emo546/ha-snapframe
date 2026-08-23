@@ -69,13 +69,20 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install --quiet -r snapframe/requirements.txt ruff
+        run: pip install --quiet -r tests/requirements.txt ruff
       - name: Syntax check
         run: python -m compileall -q snapframe/rootfs/usr/bin
       - name: Ruff
         run: ruff check --config ruff.toml snapframe/rootfs/usr/bin tests
       - name: Unit tests
         run: python -m unittest discover -s tests -v
+      - name: No test may silently skip in CI
+        run: |
+          python -m unittest discover -s tests 2>&1 | tee /tmp/tests.log
+          if grep -q "skipped=" /tmp/tests.log; then
+            echo "::error::Testy sa preskočili – chýba závislosť v tests/requirements.txt"
+            exit 1
+          fi
 
   frontend:
     name: Frontend
