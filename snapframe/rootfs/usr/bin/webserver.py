@@ -1106,13 +1106,24 @@ def status_route():
 # ── Weather mode (spúšťané pohybovým senzorom cez HA automatizáciu) ───────────
 
 def _hour_label(dt_str: str) -> str:
-    """Z ISO datetime (napr. '2026-07-13T14:00:00+00:00') urobí 'HH:MM'."""
+    """Z ISO datetime (napr. '2026-07-13T14:00:00+00:00') urobí 'HH:MM'.
+
+    HA posiela tieto časy v UTC. Predtým sa tu len odsekol ciferník bez
+    prevodu do lokálnej zóny, takže hodinová predpoveď bola posunutá presne
+    o UTC offset (v lete o 2 h) – dáta boli správne, len zle popísané.
+    Kontajner môže, ale nemusí mať TZ nastavené (Supervisor ho zvyčajne
+    posiela); .astimezone() bez argumentu prevedie do lokálnej zóny hostiteľa,
+    keď je známa, inak vráti pôvodný čas nezmenený.
+    """
     s = str(dt_str or "")
     try:
         clean = s.replace("Z", "+00:00")
-        return datetime.fromisoformat(clean).strftime("%H:%M")
+        dt = datetime.fromisoformat(clean)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone()
+        return dt.strftime("%H:%M")
     except (ValueError, TypeError):
-        # Fallback: skús vyseknúť hodinu z reťazca "....THH:MM..."
+        # Fallback: skús vyseknúť hodinu z reťazca "....THH:MM..." (bez prevodu zóny)
         if "T" in s and len(s) >= 16:
             return s[11:16]
         return ""
@@ -1129,8 +1140,13 @@ def _parse_hourly(raw_list, max_items=12):
             temp = round(float(item.get("temperature")), 1)
         except (TypeError, ValueError):
             temp = None
+        iso = str(item.get("datetime") or "")
         out.append({
-            "time":      _hour_label(item.get("datetime")),
+            "time":      _hour_label(iso),
+            # Surový ISO čas navyše – prehliadač na tablete má na rozdiel od
+            # kontajnera spoľahlivo správnu lokálnu časovú zónu (rovnaký princíp
+            # ako pri kalendári odpadu), takže si "time" môže prepočítať sám.
+            "iso":       iso,
             "temperature": temp,
             "condition": str(item.get("condition") or "")[:40],
         })

@@ -659,6 +659,22 @@ function showWeatherSlide() {
   document.getElementById("weather-slide").className = "visible";
 }
 
+/** HH:MM v lokálnej zóne tabletu. iso prichádza z HA v UTC – kontajner
+ * add-onu nemá spoľahlivú lokálnu zónu, prehliadač na tablete áno (rovnaký
+ * princíp ako pri kalendári odpadu). Padá späť na h.time (spočítané na
+ * serveri), keď iso chýba alebo ho prehliadač nevie rozparsovať. */
+function _hourLocalTime(h) {
+  if (h.iso) {
+    var d = new Date(h.iso);
+    if (!isNaN(d.getTime())) {
+      var hh = d.getHours();
+      var mm = d.getMinutes();
+      return (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm;
+    }
+  }
+  return h.time || "";
+}
+
 function renderHourly(hourly) {
   var host = document.getElementById("weather-hourly");
   if (!hourly || !hourly.length) { host.innerHTML = ""; host.style.display = "none"; return; }
@@ -682,7 +698,7 @@ function renderHourly(hourly) {
     var ico  = WEATHER_EMOJI[h.condition] || "🌡️";
     var temp = (h.temperature != null) ? Math.round(h.temperature) + "°" : "--";
     html += "<div class=\"weather-hour" + (j === 0 ? " now" : "") + "\">"
-          + "<div class=\"wh-time\">" + escHtml(h.time || "") + "</div>"
+          + "<div class=\"wh-time\">" + escHtml(_hourLocalTime(h)) + "</div>"
           + "<div class=\"wh-ico\">" + ico + "</div>"
           + "<div class=\"wh-temp\">" + escHtml(temp) + "</div>"
           + "</div>";
