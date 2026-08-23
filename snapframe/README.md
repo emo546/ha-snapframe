@@ -16,6 +16,7 @@ If you have a retired iPad, an old Android tablet, or any spare touchscreen gath
 - 📅 **EXIF overlay** – date and GPS location (via Nominatim reverse geocoding) shown on each photo
 - ⬆️ **Web upload** – upload photos directly from a phone's browser without needing SMB access; supports multiple files and creating new albums on the fly
 - 🌤️ **Motion-triggered weather screen** – trigger "weather mode" from a Home Assistant motion sensor (e.g. in the morning) so the slideshow inserts a nicely designed current-weather + today's forecast screen every few photos
+- 🗑️ **Waste collection reminders** – set up your municipal collection calendar in the app (every other Thursday, first Monday of the month, or plain dates) and the frame reminds you the day before which bin goes out — as a corner badge on the photos, a full-screen reminder every few photos, or both
 - 🌙 **Night mode** – configurable sleep schedule blanks the screen (plain black or an animated starry sky) to save your display and avoid a glowing photo frame at 3am
 - 🌍 **Multi-language UI** – Slovak, English, and German out of the box
 - ⚙️ **In-app settings** – night-mode theme can be changed directly from the slideshow, no need to touch the Home Assistant add-on configuration
@@ -23,7 +24,7 @@ If you have a retired iPad, an old Android tablet, or any spare touchscreen gath
 - 🗑️ **Trash** – long-press any photo to move it to `_kos/` subfolder (recoverable via SMB)
 - 👆 **Swipe gestures** – left/right to navigate, swipe down to return to album selection
 - 🔐 **Optional HTTP Basic Auth** – password-protect the web interface
-- 📡 **REST API** – `/status`, `/scan`, `/upload`, `/weather-mode/*` endpoints for Home Assistant automations
+- 📡 **REST API** – `/status`, `/scan`, `/upload`, `/weather-mode/*`, `/waste/*` endpoints for Home Assistant automations
 
 > Looking for keywords: *Home Assistant photo frame*, *digital picture frame add-on*, *HEIC to JPG converter for Home Assistant*, *iPad photo frame without iCloud*, *self-hosted Aura/Skylight/Nixplay alternative*, *old tablet recycle project*, *smart mirror weather display*. If that's what brought you here — you're in the right place.
 
@@ -198,7 +199,10 @@ Open `http://YOUR_HA_IP:8099` on your tablet/iPad (or any browser).
 
 ### Settings (⚙)
 
-Tap the gear icon in the top-right corner of the album selection screen to open in-app settings. Currently this lets you switch the night-mode screen between a plain black background and an animated starry sky with occasional shooting stars — saved per device via `localStorage`, no restart required.
+Tap the gear icon in the top-right corner of the album selection screen to open in-app settings:
+
+- **Night mode screen** – switch between a plain black background and an animated starry sky with occasional shooting stars. Saved per device via `localStorage`, no restart required.
+- **Waste collection…** – opens the waste collection calendar editor (see [Waste collection reminders](#waste-collection-reminders)). Unlike the night-mode theme this is stored on the server, so every tablet pointed at the add-on shares one schedule.
 
 ### Night mode
 
@@ -218,6 +222,110 @@ At the bottom of the album selection screen, tap **"↑ Upload photos"** to expa
 ### Manual scan
 
 Tap **"↻ Scan now"** on the album selection screen to trigger an immediate scan of the `watch_folder` without waiting for the next scheduled interval.
+
+---
+
+## Waste collection reminders
+
+The frame can remind you which bin goes out tomorrow, so the container actually makes it to the kerb the evening before.
+
+Everything is configured **in the app** — open the slideshow, tap the ⚙ gear on the album selection screen, then **"Waste collection…"**. Nothing here lives in the add-on options: a year of collection dates is miserable to maintain as YAML, and changing it would need an add-on restart. The schedule is stored in `/data/waste_schedule.json` (survives restarts and add-on updates) and is shared by every tablet pointed at this add-on.
+
+### Setting up a collection
+
+Tap **"+ Add collection"** and describe how that pickup repeats. Municipal calendars are almost never a flat list of dates, so there are three kinds of rule:
+
+| Repeats | Use it for | You configure |
+|---|---|---|
+| **Every N weeks** | *"mixed waste, every other Thursday"* | weekday, N (1–12), and a **reference date** — one real collection day, which fixes *which* week is the right one |
+| **Monthly** | *"paper, first Monday of the month"*, *"glass, on the 15th"* | position in the month (first…fifth or **last**) + weekday, **or** a day number; optionally restricted to certain months |
+| **Specific dates** | irregular pickups, bulky waste days | a list of dates you add one by one |
+
+Each rule additionally supports:
+
+- **Valid from / until** – e.g. a bio-waste rule that only runs April–November
+- **Exceptions** – single dates when the collection is cancelled (public holidays)
+- **Extra one-off dates** – a replacement pickup moved to a different day; these apply even outside the validity range
+- **Custom name** – overrides the built-in waste-type label (e.g. *"Yellow bags"* instead of *"Plastic"*)
+
+Ten waste types are built in (mixed, bio, plastic, paper, glass, metal, drink cartons, e-waste, bulky, other), each with its own icon and colour. Two collections falling on the same day are merged into one reminder.
+
+> **The reference date matters.** For *"every other Thursday"* the frame has no way to know which Thursday is yours — pick any single date you know there was (or will be) a collection, and the rest of the year follows from it. If you enter a date that isn't the chosen weekday it's snapped back to the nearest one, and the phase works in both directions, so a date in the future is fine too.
+
+### How the reminder appears
+
+Under **"How to show the reminder"**:
+
+- **Corner badge** – a small, high-contrast badge in the top-left corner of the photos, visible the whole time the reminder is active
+- **Full screen** – a full-screen reminder inserted between photos every *N* photos (default 10), like the weather screen
+- **Both**
+
+And under the timing options:
+
+- **Remind days ahead** (0–7, default 1) – how far in advance to warn. `1` is the useful one: the reminder appears all day the day before.
+- **Also remind on collection day** (default on) – keeps the reminder up on the morning of the collection itself. When a collection falls both today and tomorrow, today's wins.
+- **Show the reminder only from** (default 00:00) – suppresses the *day-before* reminder until that hour, so you're not looking at "tomorrow: plastic" from 6 a.m. The reminder on the collection day itself ignores this.
+
+The reminder is hidden while the weather screen is showing, during night mode, and outside the slideshow.
+
+> **Time zones:** the add-on only ships the *list of upcoming collection days*; the tablet's browser decides what "today" and "tomorrow" mean using its own local time. A container running in UTC therefore can't shift your reminder by a day.
+
+### Using the schedule in Home Assistant
+
+`GET /waste/next` is shaped for a REST sensor, so the same calendar can also drive a phone notification:
+
+```yaml
+# configuration.yaml
+sensor:
+  - platform: rest
+    name: Waste collection next
+    resource: http://homeassistant.local:8099/waste/next
+    value_template: "{{ value_json.state }}"      # next collection date, YYYY-MM-DD
+    json_attributes:
+      - days_until
+      - text                                       # "Plastic, Paper"
+      - types
+    scan_interval: 3600
+```
+
+```yaml
+# automation: nudge my phone at 6 p.m. the day before
+automation:
+  - alias: "Waste collection tomorrow"
+    triggers:
+      - trigger: time
+        at: "18:00:00"
+    conditions:
+      - condition: template
+        value_template: >
+          {{ state_attr('sensor.waste_collection_next', 'days_until') | int(-1) == 1 }}
+    actions:
+      - action: notify.mobile_app_my_phone
+        data:
+          title: "Bin out tonight"
+          message: >
+            Tomorrow: {{ state_attr('sensor.waste_collection_next', 'text') }}
+```
+
+If the web interface is protected with `basic_auth_user` / `basic_auth_password`, add `username` / `password` to the REST sensor.
+
+### `/waste/next` response example
+
+```json
+{
+  "ok": true,
+  "state": "2026-08-27",
+  "date": "2026-08-27",
+  "days_until": 1,
+  "text": "Plastic, Paper",
+  "types": [
+    { "id": "plastic", "label": "Plastic", "icon": "\ud83e\udd64", "color": "#f2c200" },
+    { "id": "paper",   "label": "Paper",   "icon": "\ud83d\udcc4", "color": "#4a90e2" }
+  ]
+}
+```
+
+When nothing is scheduled, `state` is an empty string and `days_until` is `null`.
 
 ---
 
@@ -329,6 +437,10 @@ To turn weather mode off early (e.g. from another automation, or a script tied t
 | `POST` | `/weather-mode/off` | Deactivate weather mode immediately |
 | `POST` | `/weather-update` | Push current weather data (JSON body, see [Weather mode](#weather-mode-motion-triggered-morning-briefing)) |
 | `GET` | `/weather` | JSON with weather-mode status and the last pushed weather data |
+| `GET` | `/waste/config` | Full waste calendar config + the waste-type catalogue (used by the in-app editor) |
+| `POST` | `/waste/config` | Replace the waste calendar config (JSON body; validated and clamped server-side) |
+| `GET` | `/waste/status` | Display settings + expanded collection days for the next ~3 weeks |
+| `GET` | `/waste/next` | Next collection — shaped for a Home Assistant REST sensor |
 
 ### `/status` response example
 

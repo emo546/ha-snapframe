@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-SnapFrame – webový server v2.9
+SnapFrame – webový server v2.10
 Novinky v2.6: multi-language (SK/EN/DE), sleep schedule (čierna obrazovka v noci)
 Novinky v2.7: nastavenia v appke – voliteľná hviezdna obloha (namiesto čiernej) počas sleep režimu
 Novinky v2.8: weather mode – pohybovým senzorom (cez HA automatizáciu) spúšťaná obrazovka
               s aktuálnym počasím a predpoveďou, vkladaná periodicky medzi fotky
 Novinky v2.9: weather mode – hodinová predpoveď na najbližších ~12 h (pás s časom,
               ikonou a teplotou); min/max sa dopočíta z hodinovej predpovede
+Novinky v2.10: kalendár vývozu odpadu – termíny zvozov sa nastavia priamo v appke
+              (pravidlá typu „každý druhý štvrtok“ / „prvý pondelok v mesiaci“ /
+              konkrétne dátumy) a deň vopred sa na fotkách zobrazí pripomienka –
+              buď štítok v rohu, alebo celoobrazovkový slide medzi fotkami
 """
 
 import os
@@ -18,7 +22,7 @@ import time
 import urllib.request
 from collections import OrderedDict
 from pathlib import Path
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from flask import Flask, send_from_directory, jsonify, Response, request
 from PIL import Image, ImageOps
@@ -63,6 +67,13 @@ try:
     _has_state = True
 except ImportError:
     _has_state = False
+
+try:
+    import waste as _waste
+    _has_waste = True
+except ImportError:               # pragma: no cover – modul je súčasťou image-u
+    _has_waste = False
+    log.warning("Modul waste.py sa nepodarilo načítať – kalendár odpadu je vypnutý")
 
 # ── LRU Cache (250 položiek) ──────────────────────────────────────────────────
 class _LRUCache:
@@ -130,6 +141,64 @@ TRANSLATIONS = {
         "weather_high":         "Max",
         "weather_low":          "Min",
         "weather_humidity":     "Vlhkos\u0165",
+        # — Kalendár vývozu odpadu —
+        "waste_open_btn":       "Vývoz odpadu…",
+        "waste_title":          "Vývoz odpadu",
+        "waste_enabled_label":  "Pripomienka vývozu",
+        "waste_on":             "Zapnuté",
+        "waste_off":            "Vypnuté",
+        "waste_display_label":  "Ako zobraziť pripomienku",
+        "waste_mode_overlay":   "Štítok v rohu",
+        "waste_mode_slide":     "Celá obrazovka",
+        "waste_mode_both":      "Oboje",
+        "waste_interval_label": "Celá obrazovka každých … fotiek",
+        "waste_days_label":     "Upozorniť dní vopred",
+        "waste_show_on_day":    "Pripomenúť aj v deň vývozu",
+        "waste_start_hour":     "Pripomienku zobrazovať až od",
+        "waste_rules_label":    "Zvozy",
+        "waste_add_rule":       "+ Pridať zvoz",
+        "waste_no_rules":       "Zatiaľ nie sú nastavené žiadne zvozy.",
+        "waste_type_label":     "Druh odpadu",
+        "waste_name_label":     "Vlastný názov (nepovinné)",
+        "waste_recurrence":     "Opakovanie",
+        "waste_kind_weekly":    "Každý N-tý týždeň",
+        "waste_kind_monthly":   "Mesačne",
+        "waste_kind_dates":     "Konkrétne dátumy",
+        "waste_weekday":        "Deň v týždni",
+        "waste_every_weeks":    "Každých … týždňov",
+        "waste_anchor":         "Referenčný dátum (jeden zo zvozov)",
+        "waste_anchor_hint":    "Podľa neho sa počíta, ktorý týždeň je „ten správny“.",
+        "waste_monthly_by":     "Určiť podľa",
+        "waste_by_weekday":     "Poradia v mesiaci",
+        "waste_by_day":         "Čísla dňa",
+        "waste_week_of_month":  "Ktorý týždeň",
+        "waste_day_of_month":   "Deň v mesiaci",
+        "waste_months":         "Len v mesiacoch (nepovinné)",
+        "waste_dates_label":    "Dátumy vývozu",
+        "waste_add_date":       "Pridať",
+        "waste_valid_from":     "Platí od (nepovinné)",
+        "waste_valid_to":       "Platí do (nepovinné)",
+        "waste_skip_label":     "Výnimky – v tieto dni sa nevyváža",
+        "waste_extra_label":    "Mimoriadne termíny navyše",
+        "waste_save":           "Uložiť",
+        "waste_cancel":         "Zrušiť",
+        "waste_delete":         "Odstrániť",
+        "waste_saved":          "✓ Uložené",
+        "waste_save_err":       "Uloženie zlyhalo",
+        "waste_preview":        "Najbližšie vývozy",
+        "waste_preview_none":   "Žiadne naplánované vývozy",
+        "waste_today":          "Dnes",
+        "waste_tomorrow":       "Zajtra",
+        "waste_in_days_few":    "O {0} dni",
+        "waste_in_days_many":   "O {0} dní",
+        "waste_headline":       "vývoz odpadu",
+        "waste_hint":           "Nezabudni večer vyložiť kontajner na ulicu",
+        "waste_hint_today":     "Kontajner má byť už na ulici",
+        "waste_every_week":     "každý týždeň",
+        "waste_every_n_weeks":  "každý {0}. týždeň",
+        "waste_dates_one":      "{0} dátum",
+        "waste_dates_few":      "{0} dátumy",
+        "waste_dates_many":     "{0} dátumov",
     },
     "en": {
         "app_title":            "SnapFrame",
@@ -170,6 +239,64 @@ TRANSLATIONS = {
         "weather_high":         "High",
         "weather_low":          "Low",
         "weather_humidity":     "Humidity",
+        # — Waste collection calendar —
+        "waste_open_btn":       "Waste collection…",
+        "waste_title":          "Waste collection",
+        "waste_enabled_label":  "Collection reminder",
+        "waste_on":             "On",
+        "waste_off":            "Off",
+        "waste_display_label":  "How to show the reminder",
+        "waste_mode_overlay":   "Corner badge",
+        "waste_mode_slide":     "Full screen",
+        "waste_mode_both":      "Both",
+        "waste_interval_label": "Full screen every … photos",
+        "waste_days_label":     "Remind days ahead",
+        "waste_show_on_day":    "Also remind on collection day",
+        "waste_start_hour":     "Show the reminder only from",
+        "waste_rules_label":    "Collections",
+        "waste_add_rule":       "+ Add collection",
+        "waste_no_rules":       "No collections configured yet.",
+        "waste_type_label":     "Waste type",
+        "waste_name_label":     "Custom name (optional)",
+        "waste_recurrence":     "Repeats",
+        "waste_kind_weekly":    "Every N weeks",
+        "waste_kind_monthly":   "Monthly",
+        "waste_kind_dates":     "Specific dates",
+        "waste_weekday":        "Day of week",
+        "waste_every_weeks":    "Every … weeks",
+        "waste_anchor":         "Reference date (one collection day)",
+        "waste_anchor_hint":    "Used to work out which week is the “right” one.",
+        "waste_monthly_by":     "Determined by",
+        "waste_by_weekday":     "Position in month",
+        "waste_by_day":         "Day number",
+        "waste_week_of_month":  "Which week",
+        "waste_day_of_month":   "Day of month",
+        "waste_months":         "Only in months (optional)",
+        "waste_dates_label":    "Collection dates",
+        "waste_add_date":       "Add",
+        "waste_valid_from":     "Valid from (optional)",
+        "waste_valid_to":       "Valid until (optional)",
+        "waste_skip_label":     "Exceptions – no collection on",
+        "waste_extra_label":    "Extra one-off collections",
+        "waste_save":           "Save",
+        "waste_cancel":         "Cancel",
+        "waste_delete":         "Delete",
+        "waste_saved":          "✓ Saved",
+        "waste_save_err":       "Saving failed",
+        "waste_preview":        "Next collections",
+        "waste_preview_none":   "No collections scheduled",
+        "waste_today":          "Today",
+        "waste_tomorrow":       "Tomorrow",
+        "waste_in_days_few":    "In {0} days",
+        "waste_in_days_many":   "In {0} days",
+        "waste_headline":       "waste collection",
+        "waste_hint":           "Remember to put the bin out tonight",
+        "waste_hint_today":     "The bin should already be out",
+        "waste_every_week":     "every week",
+        "waste_every_n_weeks":  "every {0} weeks",
+        "waste_dates_one":      "{0} date",
+        "waste_dates_few":      "{0} dates",
+        "waste_dates_many":     "{0} dates",
     },
     "de": {
         "app_title":            "SnapFrame",
@@ -210,6 +337,64 @@ TRANSLATIONS = {
         "weather_high":         "Hoch",
         "weather_low":          "Tief",
         "weather_humidity":     "Feuchtigkeit",
+        # — Abfallkalender —
+        "waste_open_btn":       "Abfuhrkalender…",
+        "waste_title":          "Abfuhrkalender",
+        "waste_enabled_label":  "Abfuhr-Erinnerung",
+        "waste_on":             "Ein",
+        "waste_off":            "Aus",
+        "waste_display_label":  "Wie soll erinnert werden",
+        "waste_mode_overlay":   "Schild in der Ecke",
+        "waste_mode_slide":     "Vollbild",
+        "waste_mode_both":      "Beides",
+        "waste_interval_label": "Vollbild alle … Fotos",
+        "waste_days_label":     "Tage im Voraus erinnern",
+        "waste_show_on_day":    "Auch am Abfuhrtag erinnern",
+        "waste_start_hour":     "Erinnerung erst ab",
+        "waste_rules_label":    "Abfuhren",
+        "waste_add_rule":       "+ Abfuhr hinzufügen",
+        "waste_no_rules":       "Noch keine Abfuhren eingerichtet.",
+        "waste_type_label":     "Abfallart",
+        "waste_name_label":     "Eigener Name (optional)",
+        "waste_recurrence":     "Wiederholung",
+        "waste_kind_weekly":    "Alle N Wochen",
+        "waste_kind_monthly":   "Monatlich",
+        "waste_kind_dates":     "Bestimmte Daten",
+        "waste_weekday":        "Wochentag",
+        "waste_every_weeks":    "Alle … Wochen",
+        "waste_anchor":         "Referenzdatum (ein Abfuhrtag)",
+        "waste_anchor_hint":    "Damit wird berechnet, welche Woche die „richtige“ ist.",
+        "waste_monthly_by":     "Festgelegt durch",
+        "waste_by_weekday":     "Position im Monat",
+        "waste_by_day":         "Tagesnummer",
+        "waste_week_of_month":  "Welche Woche",
+        "waste_day_of_month":   "Tag im Monat",
+        "waste_months":         "Nur in Monaten (optional)",
+        "waste_dates_label":    "Abfuhrtermine",
+        "waste_add_date":       "Hinzufügen",
+        "waste_valid_from":     "Gültig ab (optional)",
+        "waste_valid_to":       "Gültig bis (optional)",
+        "waste_skip_label":     "Ausnahmen – keine Abfuhr am",
+        "waste_extra_label":    "Zusätzliche Sondertermine",
+        "waste_save":           "Speichern",
+        "waste_cancel":         "Abbrechen",
+        "waste_delete":         "Löschen",
+        "waste_saved":          "✓ Gespeichert",
+        "waste_save_err":       "Speichern fehlgeschlagen",
+        "waste_preview":        "Nächste Abfuhren",
+        "waste_preview_none":   "Keine Abfuhren geplant",
+        "waste_today":          "Heute",
+        "waste_tomorrow":       "Morgen",
+        "waste_in_days_few":    "In {0} Tagen",
+        "waste_in_days_many":   "In {0} Tagen",
+        "waste_headline":       "Abfuhr",
+        "waste_hint":           "Denk daran, die Tonne heute Abend rauszustellen",
+        "waste_hint_today":     "Die Tonne sollte schon draußen stehen",
+        "waste_every_week":     "jede Woche",
+        "waste_every_n_weeks":  "alle {0} Wochen",
+        "waste_dates_one":      "{0} Termin",
+        "waste_dates_few":      "{0} Termine",
+        "waste_dates_many":     "{0} Termine",
     },
 }
 
@@ -220,6 +405,25 @@ MONTHS = {
            "July","August","September","October","November","December"],
     "de": ["Januar","Februar","März","April","Mai","Juni",
            "Juli","August","September","Oktober","November","Dezember"],
+}
+
+WEEKDAYS = {
+    "sk": ["Pondelok","Utorok","Streda","\u0160tvrtok","Piatok","Sobota","Nede\u013ea"],
+    "en": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],
+    "de": ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"],
+}
+
+WEEKDAYS_SHORT = {
+    "sk": ["Po","Ut","St","\u0160t","Pi","So","Ne"],
+    "en": ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
+    "de": ["Mo","Di","Mi","Do","Fr","Sa","So"],
+}
+
+# Poradie t\u00fd\u017ed\u0148a v mesiaci (1..5 a -1 = posledn\u00fd) pre popis pravidla
+WEEK_ORDINALS = {
+    "sk": {"1": "prv\u00fd", "2": "druh\u00fd", "3": "tret\u00ed", "4": "\u0161tvrt\u00fd", "5": "piaty", "-1": "posledn\u00fd"},
+    "en": {"1": "first", "2": "second", "3": "third", "4": "fourth", "5": "fifth", "-1": "last"},
+    "de": {"1": "erster", "2": "zweiter", "3": "dritter", "4": "vierter", "5": "f\u00fcnfter", "-1": "letzter"},
 }
 
 GEOCODE_LANG = {"sk": "sk,cs,en", "en": "en", "de": "de,en"}
@@ -726,6 +930,84 @@ def weather_route():
         status["data"]["condition_label"] = WEATHER_CONDITIONS.get(lang, {}).get(cond, cond)
     return jsonify(status)
 
+# ── Kalendár vývozu odpadu ─────────────────────────────────────
+
+def _waste_lang():
+    return LANGUAGE if LANGUAGE in TRANSLATIONS else "sk"
+
+@app.route("/waste/config")
+def waste_config_route():
+    """Celá konfigurácia + katalóg druhov odpadu – pre editor v appke."""
+    if not _has_waste:
+        return jsonify({"ok": False, "error": "unavailable"}), 503
+    lang = _waste_lang()
+    return jsonify({
+        "ok":      True,
+        "config":  _waste.load_config(),
+        "types":   _waste.type_catalog(lang),
+        "max_rules": _waste.MAX_RULES,
+    })
+
+@app.route("/waste/config", methods=["POST"])
+def waste_config_save_route():
+    if not _has_waste:
+        return jsonify({"ok": False, "error": "unavailable"}), 503
+    raw = request.get_json(silent=True)
+    if raw is None:
+        return jsonify({"ok": False, "error": "no data"}), 400
+    try:
+        cfg = _waste.save_config(raw)
+    except Exception as e:
+        log.error("Uloženie kalendára odpadu zlyhalo: {}".format(e))
+        return jsonify({"ok": False, "error": "save failed"}), 500
+    log.info("Kalendár odpadu uložený: {} pravidiel, režim {}, {}".format(
+        len(cfg["rules"]), cfg["mode"], "zapnutý" if cfg["enabled"] else "vypnutý"))
+    return jsonify({"ok": True, "config": cfg})
+
+@app.route("/waste/status")
+def waste_status_route():
+    """Čo sa vyváža v najbližších dňoch.
+
+    Zámerne posielame surový zoznam termínov a nie hotovú hlášku „zajtra sa
+    vyváža…“ – čo je „dnešok“ si rozhodne prehliadač na tablete, ktorý má
+    na rozdiel od kontajnera add-onu spoľahlivo správnu lokálnu časovú zónu.
+    Okno začína 2 dni v minulosti, aby posun TZ nikdy neodrežal dnešný termín.
+    """
+    if not _has_waste:
+        return jsonify({"enabled": False, "upcoming": []})
+    cfg  = _waste.load_config()
+    lang = _waste_lang()
+    return jsonify({
+        "enabled":        cfg["enabled"],
+        "mode":           cfg["mode"],
+        "photo_interval": cfg["photo_interval"],
+        "days_before":    cfg["days_before"],
+        "show_on_day":    cfg["show_on_day"],
+        "start_hour":     cfg["start_hour"],
+        "upcoming":       _waste.occurrences(cfg, date.today() - timedelta(days=2),
+                                             _waste.UPCOMING_DAYS, lang),
+    })
+
+@app.route("/waste/next")
+def waste_next_route():
+    """Najbližší vývoz – pre REST senzor / automatizácie v Home Assistante."""
+    if not _has_waste:
+        return jsonify({"ok": False, "error": "unavailable"}), 503
+    cfg = _waste.load_config()
+    nxt = _waste.next_collection(cfg, date.today(), _waste_lang())
+    if not nxt:
+        return jsonify({"ok": True, "state": "", "date": "", "days_until": None,
+                        "types": [], "text": ""})
+    labels = [t["label"] for t in nxt["types"]]
+    return jsonify({
+        "ok":         True,
+        "state":      nxt["date"],
+        "date":       nxt["date"],
+        "days_until": nxt["days_until"],
+        "types":      nxt["types"],
+        "text":       ", ".join(labels),
+    })
+
 # ── HTML ──────────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -1052,6 +1334,205 @@ html, body {
     margin-top: 24px; margin-top: clamp(16px, 3vh, 34px); bottom: auto;
   }
 }
+/* ===== ODPAD: štítok v rohu fotky ===== */
+/* Rovnaký princíp ako weather slide: vždy px fallback pred clamp(),
+   žiadny flex `gap` – starý iPad Safari (9–13) ich nepozná. */
+#waste-badge {
+  position: absolute; top: 16px; left: 18px; z-index: 95;
+  display: none; max-width: 62%;
+  background: rgba(8,10,14,0.62);
+  border-radius: 14px; border-radius: clamp(12px, 1.2vw, 18px);
+  border-left: 6px solid #9aa5b1;
+  padding: 12px 18px 12px 14px;
+  padding: clamp(9px, 1.4vh, 18px) clamp(13px, 1.5vw, 24px) clamp(9px, 1.4vh, 18px) clamp(10px, 1.1vw, 18px);
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+  pointer-events: none;
+}
+#waste-badge.visible { display: block; }
+.wb-row { display: table; width: 100%; }
+.wb-ico {
+  display: table-cell; vertical-align: middle; padding-right: 12px;
+  font-size: 38px; font-size: clamp(30px, 3.4vw, 54px); line-height: 1;
+}
+.wb-text { display: table-cell; vertical-align: middle; text-align: left; }
+.wb-when {
+  font-size: 13px; font-size: clamp(11px, 1.1vw, 17px);
+  letter-spacing: 0.18em; text-transform: uppercase;
+  color: rgba(255,255,255,0.55); margin-bottom: 3px;
+}
+.wb-what {
+  font-size: 26px; font-size: clamp(20px, 2.2vw, 36px);
+  font-weight: 300; color: #fff; line-height: 1.15;
+}
+/* ===== ODPAD: celoobrazovkový slide ===== */
+#waste-slide {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 82;
+  background:
+    radial-gradient(ellipse at 50% 28%, #1d3324 0%, #0c1712 55%, #05080b 100%);
+  display: none; -webkit-flex-direction: column; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  padding: 4vh 5vw; -webkit-box-sizing: border-box; box-sizing: border-box;
+  opacity: 0; -webkit-transition: opacity 1s ease-in-out; transition: opacity 1s ease-in-out;
+}
+#waste-slide.visible { display: block; display: -webkit-flex; display: flex; opacity: 1; }
+.waste-when {
+  font-size: 24px; font-size: clamp(18px, 2.4vw, 38px);
+  letter-spacing: 0.26em; text-transform: uppercase;
+  color: rgba(255,255,255,0.55);
+  margin-bottom: 18px; margin-bottom: clamp(10px, 2vh, 30px);
+}
+.waste-icons {
+  font-size: 110px; font-size: clamp(70px, 13vw, 168px); line-height: 1.05;
+  filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
+  -webkit-filter: drop-shadow(0 8px 26px rgba(0,0,0,0.6));
+}
+.waste-names {
+  font-size: 58px; font-size: clamp(34px, 6.4vw, 96px);
+  font-weight: 200; letter-spacing: -0.01em; color: #fff; line-height: 1.1;
+  margin-top: 16px; margin-top: clamp(8px, 1.8vh, 26px);
+  text-shadow: 0 3px 30px rgba(0,0,0,0.5);
+}
+.waste-names .wn-sep { color: rgba(255,255,255,0.32); }
+.waste-accent {
+  width: 120px; width: clamp(80px, 11vw, 190px);
+  height: 6px; height: clamp(4px, 0.6vh, 9px);
+  border-radius: 4px; background: #7cb342;
+  margin: 26px auto 0; margin-top: clamp(16px, 2.6vh, 36px);
+}
+.waste-hint {
+  font-size: 22px; font-size: clamp(16px, 2vw, 32px); font-weight: 300;
+  color: rgba(255,255,255,0.7);
+  margin-top: 26px; margin-top: clamp(15px, 2.6vh, 38px);
+  max-width: 900px;
+}
+.waste-date {
+  position: absolute; bottom: 28px; bottom: clamp(20px, 3.5vh, 44px);
+  left: 0; right: 0; text-align: center;
+  font-size: 15px; font-size: clamp(13px, 1.4vw, 20px);
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: rgba(255,255,255,0.32);
+}
+@media (orientation: portrait) {
+  .waste-names { font-size: 46px; font-size: clamp(30px, 9vw, 62px); }
+  .waste-icons { font-size: 96px; font-size: clamp(64px, 20vw, 130px); }
+  .waste-when  { font-size: 20px; font-size: clamp(15px, 4vw, 26px); }
+  .waste-hint  { font-size: 20px; font-size: clamp(15px, 4vw, 26px); }
+  .waste-date  { position: static; margin-top: 26px; }
+}
+/* ===== ODPAD: editor kalendára ===== */
+#waste-dialog {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 400; background: #0c0c0c; display: none;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 26px 18px 40px; -webkit-box-sizing: border-box; box-sizing: border-box;
+}
+.wd-inner { max-width: 560px; margin: 0 auto; text-align: left; }
+.wd-title {
+  font-size: 13px; letter-spacing: 2.5px; text-transform: uppercase;
+  color: #777; margin-bottom: 22px; text-align: center;
+}
+.wd-group { margin-bottom: 22px; }
+.wd-label {
+  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: #555; margin-bottom: 9px;
+}
+.wd-hint { font-size: 11px; line-height: 1.5; color: #4a4a4a; margin-top: 6px; }
+.wd-seg { display: block; width: 100%; font-size: 0; }
+.wd-seg .wd-opt {
+  display: inline-block; -webkit-box-sizing: border-box; box-sizing: border-box;
+  background: #171717; border: 1.5px solid #272727; border-radius: 10px;
+  padding: 11px 6px; text-align: center; color: #8b8b8b; font-size: 14px;
+  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
+  margin: 0 2% 8px 0; vertical-align: top;
+  -webkit-transition: border-color .15s, background .15s, color .15s;
+  transition: border-color .15s, background .15s, color .15s;
+}
+/* Šírky sú zámerne pod matematickým maximom: každá dlaždica má margin-right,
+   takže riadok musí vyjsť aj bez spoliehania sa na :last-child – inak by pri
+   10 druhoch odpadu vyšli riadky raz po 3 a raz po 4 kusoch. */
+.wd-seg.cols2 .wd-opt { width: 47.8%; }
+.wd-seg.cols3 .wd-opt { width: 31%; }
+.wd-seg.cols4 .wd-opt { width: 22.7%; }
+.wd-seg.cols7 .wd-opt { width: 12.1%; padding: 11px 2px; font-size: 13px; }
+.wd-seg .wd-opt.active { border-color: #4a7fd6; background: #1a2333; color: #dce6fb; }
+.wd-input, .wd-select {
+  width: 100%; -webkit-box-sizing: border-box; box-sizing: border-box;
+  background: #171717; border: 1px solid #272727; border-radius: 9px;
+  color: #ddd; font-size: 15px; padding: 11px 12px; outline: none;
+  -webkit-appearance: none; appearance: none;
+  font-family: -apple-system, Helvetica, Arial, sans-serif;
+}
+.wd-select { -webkit-appearance: menulist; appearance: menulist; }
+.wd-stepper { display: table; width: 100%; }
+.wd-stepper .wd-step-btn {
+  display: table-cell; width: 54px; text-align: center; vertical-align: middle;
+  background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 9px;
+  color: #bbb; font-size: 22px; line-height: 1; padding: 10px 0;
+  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none; user-select: none;
+}
+.wd-stepper .wd-step-val {
+  display: table-cell; text-align: center; vertical-align: middle;
+  color: #fff; font-size: 19px; font-weight: 300;
+}
+.wd-check {
+  display: table; width: 100%; background: #171717; border: 1px solid #262626;
+  border-radius: 10px; padding: 12px 14px; -webkit-box-sizing: border-box;
+  box-sizing: border-box; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.wd-check .wc-txt { display: table-cell; vertical-align: middle; color: #bbb; font-size: 14px; }
+.wd-check .wc-box {
+  display: table-cell; vertical-align: middle; width: 26px; text-align: right;
+  color: #3a3a3a; font-size: 18px;
+}
+.wd-check.on .wc-box { color: #5b9bf8; }
+.wd-check.on .wc-txt { color: #e6e6e6; }
+.wd-rule {
+  display: table; width: 100%; background: #151515; border: 1px solid #232323;
+  border-left-width: 5px; border-radius: 11px; padding: 13px 14px; margin-bottom: 9px;
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.wd-rule .wr-ico { display: table-cell; vertical-align: middle; width: 40px; font-size: 25px; }
+.wd-rule .wr-txt { display: table-cell; vertical-align: middle; }
+.wd-rule .wr-name { color: #eee; font-size: 15px; margin-bottom: 2px; }
+.wd-rule .wr-sub  { color: #6b6b6b; font-size: 12px; line-height: 1.4; }
+.wd-rule .wr-go   { display: table-cell; vertical-align: middle; width: 22px;
+                    text-align: right; color: #444; font-size: 17px; }
+.wd-empty { color: #4a4a4a; font-size: 13px; padding: 14px 2px; }
+.wd-btn {
+  display: block; width: 100%; -webkit-box-sizing: border-box; box-sizing: border-box;
+  padding: 13px; border-radius: 10px; font-size: 15px; text-align: center;
+  cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent;
+  border: 1px solid #2c2c2c; background: #202020; color: #ccc; margin-bottom: 9px;
+}
+.wd-btn.primary { background: #24457c; border-color: #2f5da8; color: #eaf1ff; }
+.wd-btn.danger  { background: #2a1616; border-color: #4a2020; color: #d98a8a; }
+.wd-btn.ghost   { background: transparent; border-color: #262626; color: #777; }
+.wd-status { font-size: 13px; text-align: center; min-height: 18px; margin-bottom: 8px; color: #888; }
+.wd-status.ok  { color: #4caf50; }
+.wd-status.err { color: #d9534f; }
+.wd-chips { font-size: 0; }
+.wd-chip {
+  display: inline-block; background: #1b1b1b; border: 1px solid #2a2a2a;
+  border-radius: 20px; padding: 7px 12px; margin: 0 6px 6px 0;
+  color: #bbb; font-size: 13px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.wd-chip .wc-x { color: #666; margin-left: 7px; }
+.wd-chip.month.on { background: #1a2333; border-color: #4a7fd6; color: #dce6fb; }
+.wd-daterow { display: table; width: 100%; }
+.wd-daterow .wd-dcell { display: table-cell; vertical-align: middle; }
+.wd-daterow .wd-dbtn  {
+  display: table-cell; vertical-align: middle; width: 90px; padding-left: 8px;
+}
+.wd-preview-day {
+  display: table; width: 100%; padding: 9px 0; border-bottom: 1px solid #1c1c1c;
+}
+.wd-preview-day .wp-date { display: table-cell; vertical-align: middle; width: 45%;
+                           color: #9a9a9a; font-size: 13px; }
+.wd-preview-day .wp-types { display: table-cell; vertical-align: middle;
+                            color: #ddd; font-size: 13px; text-align: right; }
 /* ===== SETTINGS ===== */
 .settings-btn {
   position: absolute; top: 18px; right: 18px; z-index: 60;
@@ -1219,7 +1700,209 @@ html, body {
         </div>
       </div>
     </div>
+    <div class="settings-group">
+      <button class="wd-btn" id="t-waste-open-btn" onclick="openWasteDialog()"></button>
+    </div>
     <button class="settings-close" id="t-settings-close" onclick="closeSettings()"></button>
+  </div>
+</div>
+
+<!-- EDITOR KALENDÁRA VÝVOZU ODPADU -->
+<div id="waste-dialog">
+  <div class="wd-inner">
+    <div class="wd-title" id="t-waste-title"></div>
+
+    <!-- prehľad + globálne nastavenia -->
+    <div id="waste-main">
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-enabled-label"></div>
+        <div class="wd-seg cols2" id="waste-enabled-seg">
+          <div class="wd-opt" id="waste-en-off" onclick="wdSetEnabled(0)"></div>
+          <div class="wd-opt" id="waste-en-on"  onclick="wdSetEnabled(1)"></div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-display-label"></div>
+        <div class="wd-seg cols3" id="waste-mode-seg">
+          <div class="wd-opt" id="waste-mode-overlay" onclick="wdSetMode('overlay')"></div>
+          <div class="wd-opt" id="waste-mode-slide"   onclick="wdSetMode('slide')"></div>
+          <div class="wd-opt" id="waste-mode-both"    onclick="wdSetMode('both')"></div>
+        </div>
+      </div>
+
+      <div class="wd-group" id="waste-interval-group">
+        <div class="wd-label" id="t-waste-interval-label"></div>
+        <div class="wd-stepper">
+          <div class="wd-step-btn" onclick="wdStep('photo_interval',-1,2,100)">&minus;</div>
+          <div class="wd-step-val" id="waste-interval-val"></div>
+          <div class="wd-step-btn" onclick="wdStep('photo_interval',1,2,100)">+</div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-days-label"></div>
+        <div class="wd-stepper">
+          <div class="wd-step-btn" onclick="wdStep('days_before',-1,0,7)">&minus;</div>
+          <div class="wd-step-val" id="waste-days-val"></div>
+          <div class="wd-step-btn" onclick="wdStep('days_before',1,0,7)">+</div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-check" id="waste-showday-check" onclick="wdToggleShowOnDay()">
+          <div class="wc-txt" id="t-waste-show-on-day"></div>
+          <div class="wc-box">&#10003;</div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-start-hour"></div>
+        <div class="wd-stepper">
+          <div class="wd-step-btn" onclick="wdStep('start_hour',-1,0,23)">&minus;</div>
+          <div class="wd-step-val" id="waste-hour-val"></div>
+          <div class="wd-step-btn" onclick="wdStep('start_hour',1,0,23)">+</div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-rules-label"></div>
+        <div id="waste-rule-list"></div>
+        <button class="wd-btn ghost" id="t-waste-add-rule" onclick="wdNewRule()"></button>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-preview"></div>
+        <div id="waste-preview-list"></div>
+      </div>
+
+      <div class="wd-status" id="waste-status"></div>
+      <button class="wd-btn primary" id="t-waste-save" onclick="wdSaveConfig()"></button>
+      <button class="wd-btn" id="t-waste-close" onclick="closeWasteDialog()"></button>
+    </div>
+
+    <!-- editor jedného zvozu -->
+    <div id="waste-editor" style="display:none">
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-type-label"></div>
+        <div class="wd-seg cols4" id="waste-type-seg"></div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-name-label"></div>
+        <input type="text" class="wd-input" id="waste-name-input" maxlength="40">
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-recurrence"></div>
+        <div class="wd-seg cols3" id="waste-kind-seg">
+          <div class="wd-opt" id="waste-kind-weekly"  onclick="wdSetKind('weekly')"></div>
+          <div class="wd-opt" id="waste-kind-monthly" onclick="wdSetKind('monthly')"></div>
+          <div class="wd-opt" id="waste-kind-dates"   onclick="wdSetKind('dates')"></div>
+        </div>
+      </div>
+
+      <!-- týždenné -->
+      <div id="waste-weekly-box">
+        <div class="wd-group">
+          <div class="wd-label" id="t-waste-weekday"></div>
+          <div class="wd-seg cols7" id="waste-weekday-seg"></div>
+        </div>
+        <div class="wd-group">
+          <div class="wd-label" id="t-waste-every-weeks"></div>
+          <div class="wd-stepper">
+            <div class="wd-step-btn" onclick="wdStepRule('interval_weeks',-1,1,12)">&minus;</div>
+            <div class="wd-step-val" id="waste-weeks-val"></div>
+            <div class="wd-step-btn" onclick="wdStepRule('interval_weeks',1,1,12)">+</div>
+          </div>
+        </div>
+        <div class="wd-group" id="waste-anchor-group">
+          <div class="wd-label" id="t-waste-anchor"></div>
+          <input type="date" class="wd-input" id="waste-anchor-input"
+                 placeholder="YYYY-MM-DD" onchange="wdReadAnchor()">
+          <div class="wd-hint" id="t-waste-anchor-hint"></div>
+        </div>
+      </div>
+
+      <!-- mesačné -->
+      <div id="waste-monthly-box" style="display:none">
+        <div class="wd-group">
+          <div class="wd-label" id="t-waste-monthly-by"></div>
+          <div class="wd-seg cols2" id="waste-by-seg">
+            <div class="wd-opt" id="waste-by-weekday" onclick="wdSetMonthlyBy('weekday')"></div>
+            <div class="wd-opt" id="waste-by-day"     onclick="wdSetMonthlyBy('day')"></div>
+          </div>
+        </div>
+        <div id="waste-by-weekday-box">
+          <div class="wd-group">
+            <div class="wd-label" id="t-waste-week-of-month"></div>
+            <select class="wd-select" id="waste-wom-select" onchange="wdReadWom()"></select>
+          </div>
+          <div class="wd-group">
+            <div class="wd-label" id="t-waste-weekday-2"></div>
+            <div class="wd-seg cols7" id="waste-weekday-seg2"></div>
+          </div>
+        </div>
+        <div class="wd-group" id="waste-by-day-box" style="display:none">
+          <div class="wd-label" id="t-waste-day-of-month"></div>
+          <div class="wd-stepper">
+            <div class="wd-step-btn" onclick="wdStepRule('day_of_month',-1,1,31)">&minus;</div>
+            <div class="wd-step-val" id="waste-dom-val"></div>
+            <div class="wd-step-btn" onclick="wdStepRule('day_of_month',1,1,31)">+</div>
+          </div>
+        </div>
+        <div class="wd-group">
+          <div class="wd-label" id="t-waste-months"></div>
+          <div class="wd-chips" id="waste-months-chips"></div>
+        </div>
+      </div>
+
+      <!-- konkrétne dátumy -->
+      <div id="waste-dates-box" style="display:none">
+        <div class="wd-group">
+          <div class="wd-label" id="t-waste-dates-label"></div>
+          <div class="wd-daterow">
+            <div class="wd-dcell"><input type="date" class="wd-input" id="waste-date-input" placeholder="YYYY-MM-DD"></div>
+            <div class="wd-dbtn"><button class="wd-btn" style="margin:0" id="t-waste-add-date"
+                 onclick="wdAddDate('dates')"></button></div>
+          </div>
+          <div class="wd-chips" id="waste-dates-chips" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-valid-from"></div>
+        <input type="date" class="wd-input" id="waste-from-input" placeholder="YYYY-MM-DD" onchange="wdReadRange()">
+      </div>
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-valid-to"></div>
+        <input type="date" class="wd-input" id="waste-to-input" placeholder="YYYY-MM-DD" onchange="wdReadRange()">
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-skip-label"></div>
+        <div class="wd-daterow">
+          <div class="wd-dcell"><input type="date" class="wd-input" id="waste-skip-input" placeholder="YYYY-MM-DD"></div>
+          <div class="wd-dbtn"><button class="wd-btn" style="margin:0" id="t-waste-add-skip"
+               onclick="wdAddDate('skip')"></button></div>
+        </div>
+        <div class="wd-chips" id="waste-skip-chips" style="margin-top:10px"></div>
+      </div>
+
+      <div class="wd-group">
+        <div class="wd-label" id="t-waste-extra-label"></div>
+        <div class="wd-daterow">
+          <div class="wd-dcell"><input type="date" class="wd-input" id="waste-extra-input" placeholder="YYYY-MM-DD"></div>
+          <div class="wd-dbtn"><button class="wd-btn" style="margin:0" id="t-waste-add-extra"
+               onclick="wdAddDate('extra')"></button></div>
+        </div>
+        <div class="wd-chips" id="waste-extra-chips" style="margin-top:10px"></div>
+      </div>
+
+      <button class="wd-btn primary" id="t-waste-rule-ok"     onclick="wdCommitRule()"></button>
+      <button class="wd-btn"         id="t-waste-rule-cancel" onclick="wdCancelRule()"></button>
+      <button class="wd-btn danger"  id="t-waste-rule-delete" onclick="wdDeleteRule()"></button>
+    </div>
   </div>
 </div>
 
@@ -1267,6 +1950,23 @@ html, body {
     <div id="overlay-date"></div>
     <div id="overlay-location"></div>
   </div>
+  <div id="waste-badge">
+    <div class="wb-row">
+      <div class="wb-ico" id="waste-badge-ico"></div>
+      <div class="wb-text">
+        <div class="wb-when" id="waste-badge-when"></div>
+        <div class="wb-what" id="waste-badge-what"></div>
+      </div>
+    </div>
+  </div>
+  <div id="waste-slide">
+    <div class="waste-when"  id="waste-slide-when"></div>
+    <div class="waste-icons" id="waste-slide-icons"></div>
+    <div class="waste-names" id="waste-slide-names"></div>
+    <div class="waste-accent" id="waste-slide-accent"></div>
+    <div class="waste-hint"  id="waste-slide-hint"></div>
+    <div class="waste-date"  id="waste-slide-date"></div>
+  </div>
   <div id="weather-slide">
     <div class="weather-hero">
       <div class="weather-icon" id="weather-icon"></div>
@@ -1297,6 +1997,10 @@ var SLIDESHOW_SECS   = __SLIDESHOW_SECS__;
 var SLEEP_START      = "__SLEEP_START__";
 var SLEEP_END        = "__SLEEP_END__";
 var WEATHER_INTERVAL = __WEATHER_INTERVAL__;
+var WEEKDAYS         = __WEEKDAYS__;
+var WEEKDAYS_SHORT   = __WEEKDAYS_SHORT__;
+var MONTHS_LIST      = __MONTHS_LIST__;
+var WEEK_ORDINALS    = __WEEK_ORDINALS__;
 
 // ── i18n helpers ──────────────────────────────────────────────────────────────
 function tr(k)       { return TR[k] || k; }
@@ -1333,6 +2037,53 @@ function applyTranslations() {
   document.getElementById("t-theme-black").textContent          = tr("theme_black");
   document.getElementById("t-theme-stars").textContent          = tr("theme_stars");
   document.getElementById("t-settings-close").textContent       = tr("settings_close");
+  // — kalendár vývozu odpadu —
+  document.getElementById("t-waste-open-btn").textContent       = tr("waste_open_btn");
+  document.getElementById("t-waste-title").textContent          = tr("waste_title");
+  document.getElementById("t-waste-enabled-label").textContent  = tr("waste_enabled_label");
+  document.getElementById("waste-en-on").textContent            = tr("waste_on");
+  document.getElementById("waste-en-off").textContent           = tr("waste_off");
+  document.getElementById("t-waste-display-label").textContent  = tr("waste_display_label");
+  document.getElementById("waste-mode-overlay").textContent     = tr("waste_mode_overlay");
+  document.getElementById("waste-mode-slide").textContent       = tr("waste_mode_slide");
+  document.getElementById("waste-mode-both").textContent        = tr("waste_mode_both");
+  document.getElementById("t-waste-interval-label").textContent = tr("waste_interval_label");
+  document.getElementById("t-waste-days-label").textContent     = tr("waste_days_label");
+  document.getElementById("t-waste-show-on-day").textContent    = tr("waste_show_on_day");
+  document.getElementById("t-waste-start-hour").textContent     = tr("waste_start_hour");
+  document.getElementById("t-waste-rules-label").textContent    = tr("waste_rules_label");
+  document.getElementById("t-waste-add-rule").textContent       = tr("waste_add_rule");
+  document.getElementById("t-waste-preview").textContent        = tr("waste_preview");
+  document.getElementById("t-waste-save").textContent           = tr("waste_save");
+  document.getElementById("t-waste-close").textContent          = tr("settings_close");
+  document.getElementById("t-waste-type-label").textContent     = tr("waste_type_label");
+  document.getElementById("t-waste-name-label").textContent     = tr("waste_name_label");
+  document.getElementById("t-waste-recurrence").textContent     = tr("waste_recurrence");
+  document.getElementById("waste-kind-weekly").textContent      = tr("waste_kind_weekly");
+  document.getElementById("waste-kind-monthly").textContent     = tr("waste_kind_monthly");
+  document.getElementById("waste-kind-dates").textContent       = tr("waste_kind_dates");
+  document.getElementById("t-waste-weekday").textContent        = tr("waste_weekday");
+  document.getElementById("t-waste-weekday-2").textContent      = tr("waste_weekday");
+  document.getElementById("t-waste-every-weeks").textContent    = tr("waste_every_weeks");
+  document.getElementById("t-waste-anchor").textContent         = tr("waste_anchor");
+  document.getElementById("t-waste-anchor-hint").textContent    = tr("waste_anchor_hint");
+  document.getElementById("t-waste-monthly-by").textContent     = tr("waste_monthly_by");
+  document.getElementById("waste-by-weekday").textContent       = tr("waste_by_weekday");
+  document.getElementById("waste-by-day").textContent           = tr("waste_by_day");
+  document.getElementById("t-waste-week-of-month").textContent  = tr("waste_week_of_month");
+  document.getElementById("t-waste-day-of-month").textContent   = tr("waste_day_of_month");
+  document.getElementById("t-waste-months").textContent         = tr("waste_months");
+  document.getElementById("t-waste-dates-label").textContent    = tr("waste_dates_label");
+  document.getElementById("t-waste-add-date").textContent       = tr("waste_add_date");
+  document.getElementById("t-waste-add-skip").textContent       = tr("waste_add_date");
+  document.getElementById("t-waste-add-extra").textContent      = tr("waste_add_date");
+  document.getElementById("t-waste-valid-from").textContent     = tr("waste_valid_from");
+  document.getElementById("t-waste-valid-to").textContent       = tr("waste_valid_to");
+  document.getElementById("t-waste-skip-label").textContent     = tr("waste_skip_label");
+  document.getElementById("t-waste-extra-label").textContent    = tr("waste_extra_label");
+  document.getElementById("t-waste-rule-ok").textContent        = tr("waste_save");
+  document.getElementById("t-waste-rule-cancel").textContent    = tr("waste_cancel");
+  document.getElementById("t-waste-rule-delete").textContent    = tr("waste_delete");
 }
 
 // ── Settings (sleep theme) ──────────────────────────────────────────────────
@@ -1466,6 +2217,7 @@ function checkSleep() {
     }
     if (advanceTimer) { clearInterval(advanceTimer); advanceTimer = null; }
     if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    updateWasteBadge();
   } else {
     el.style.display = "none";
     _stopMeteorShowerLoop();
@@ -1473,6 +2225,8 @@ function checkSleep() {
       startAdvanceTimer();
       _startRefreshTimer();
     }
+    // po prebudení je už možno „zajtra“ – prepočítaj pripomienku
+    fetchWasteStatus();
   }
 }
 setInterval(checkSleep, 60000);
@@ -1590,7 +2344,10 @@ function goBack() {
   document.getElementById("overlay-location").innerHTML = "";
   document.getElementById("photo-counter").innerHTML    = "";
   hideWeatherSlide();
+  hideWasteSlide();
+  document.getElementById("waste-badge").className = "";
   photosSinceWeather = 0;
+  photosSinceWaste   = 0;
   slideshowActive = false;
   document.getElementById("screen-slideshow").style.display = "none";
   document.getElementById("screen-select").style.display    = "";
@@ -1637,6 +2394,7 @@ function pickEffect() { return EFFECTS[Math.floor(Math.random() * EFFECTS.length
 function showPhoto(index) {
   if (!photos.length) { return; }
   hideWeatherSlide();
+  hideWasteSlide();
   var idx      = ((index % photos.length) + photos.length) % photos.length;
   var filename = photos[idx];
   var url      = "/thumb/" + encodePath(filename);
@@ -1652,6 +2410,7 @@ function showPhoto(index) {
   activeIsA = !activeIsA;
   document.getElementById("photo-counter").innerHTML = (idx + 1) + " / " + photos.length;
   loadExifOverlay(filename);
+  updateWasteBadge();
 }
 
 function loadExifOverlay(filename) {
@@ -1670,10 +2429,19 @@ function loadExifOverlay(filename) {
 function advanceTick() {
   if (weatherModeActive && weatherData && photosSinceWeather >= WEATHER_INTERVAL) {
     photosSinceWeather = 0;
+    photosSinceWaste++;
     showWeatherSlide();
     return;
   }
+  if (wasteModeHas("slide") && currentWasteAlert() &&
+      photosSinceWaste >= (wasteCfg.photo_interval || 10)) {
+    photosSinceWaste = 0;
+    photosSinceWeather++;
+    showWasteSlide();
+    return;
+  }
   photosSinceWeather++;
+  photosSinceWaste++;
   currentIndex = (currentIndex + 1) % photos.length;
   showPhoto(currentIndex);
 }
@@ -1738,6 +2506,7 @@ function showWeatherSlide() {
   document.getElementById("overlay-date").innerHTML     = "";
   document.getElementById("overlay-location").innerHTML = "";
   document.getElementById("photo-counter").innerHTML    = "";
+  document.getElementById("waste-badge").className      = "";
   document.getElementById("weather-slide").className = "visible";
 }
 
@@ -1774,6 +2543,562 @@ function renderHourly(hourly) {
 
 function hideWeatherSlide() {
   document.getElementById("weather-slide").className = "";
+}
+
+// ── Kalendár vývozu odpadu: beh na fotorámiku ─────────────────────────────────
+var wasteCfg          = null;   // nastavenia zo /waste/status
+var wasteByDate       = {};     // "YYYY-MM-DD" -> [{id,label,icon,color}, ...]
+var wasteUpcoming     = [];     // surový zoznam pre náhľad v editore
+var photosSinceWaste  = 0;
+var wasteSlideVisible = false;
+
+function _pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+// Lokálny ISO dátum (NIE toISOString – ten prepočíta na UTC a v CEST posunie deň).
+function _isoLocal(d) {
+  return d.getFullYear() + "-" + _pad2(d.getMonth() + 1) + "-" + _pad2(d.getDate());
+}
+
+function fetchWasteStatus() {
+  xhrGet("/waste/status", function(err, text) {
+    if (err) { return; }
+    try {
+      var data = JSON.parse(text);
+      wasteCfg      = data;
+      wasteUpcoming = data.upcoming || [];
+      wasteByDate   = {};
+      for (var i = 0; i < wasteUpcoming.length; i++) {
+        wasteByDate[wasteUpcoming[i].date] = wasteUpcoming[i].types || [];
+      }
+    } catch (e) { return; }
+    updateWasteBadge();
+  });
+}
+setInterval(fetchWasteStatus, 15 * 60 * 1000);
+
+// Ktorý najbližší termín (v rámci nastaveného predstihu) máme práve pripomínať.
+// „Dnešok“ určuje prehliadač na tablete – ten má správnu lokálnu časovú zónu.
+function currentWasteAlert() {
+  if (!wasteCfg || !wasteCfg.enabled) { return null; }
+  var now   = new Date();
+  var start = wasteCfg.show_on_day ? 0 : 1;
+  for (var off = start; off <= wasteCfg.days_before; off++) {
+    var d     = new Date(now.getFullYear(), now.getMonth(), now.getDate() + off);
+    var types = wasteByDate[_isoLocal(d)];
+    if (!types || !types.length) { continue; }
+    // deň-vopred pripomienku netlačiť skôr, než si používateľ praje
+    if (off >= 1 && now.getHours() < (wasteCfg.start_hour || 0)) { continue; }
+    return { days: off, date: _isoLocal(d), types: types };
+  }
+  return null;
+}
+
+function wasteModeHas(what) {
+  if (!wasteCfg) { return false; }
+  return wasteCfg.mode === what || wasteCfg.mode === "both";
+}
+
+function wasteWhenLabel(days) {
+  if (days === 0) { return tr("waste_today"); }
+  if (days === 1) { return tr("waste_tomorrow"); }
+  if (days <= 4)  { return trf("waste_in_days_few",  [days]); }
+  return trf("waste_in_days_many", [days]);
+}
+
+function wasteIcons(types) {
+  var out = "";
+  for (var i = 0; i < types.length; i++) { out += types[i].icon; }
+  return out;
+}
+
+function wasteNames(types) {
+  var out = [];
+  for (var i = 0; i < types.length; i++) { out.push(types[i].label); }
+  return out;
+}
+
+function _wasteFormatDate(iso) {
+  var p = iso.split("-");
+  var d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+  return WEEKDAYS[(d.getDay() + 6) % 7] + " · " + d.toLocaleDateString();
+}
+
+function updateWasteBadge() {
+  var el = document.getElementById("waste-badge");
+  if (!el) { return; }
+  var a = currentWasteAlert();
+  if (!a || !wasteModeHas("overlay") || !slideshowActive ||
+      wasteSlideVisible || _weatherIsVisible() || _sleeping) {
+    el.className = ""; return;
+  }
+  document.getElementById("waste-badge-ico").innerHTML  = escHtml(wasteIcons(a.types));
+  document.getElementById("waste-badge-when").innerHTML = escHtml(wasteWhenLabel(a.days));
+  document.getElementById("waste-badge-what").innerHTML = escHtml(wasteNames(a.types).join(" · "));
+  el.style.borderLeftColor = a.types[0].color || "#9aa5b1";
+  el.className = "visible";
+}
+
+function showWasteSlide() {
+  var a = currentWasteAlert();
+  if (!a) { return; }
+  var names = wasteNames(a.types), html = "";
+  for (var i = 0; i < names.length; i++) {
+    if (i) { html += "<span class=\"wn-sep\"> · </span>"; }
+    html += escHtml(names[i]);
+  }
+  document.getElementById("waste-slide-icons").innerHTML = escHtml(wasteIcons(a.types));
+  document.getElementById("waste-slide-when").innerHTML  =
+      escHtml(wasteWhenLabel(a.days) + " · " + tr("waste_headline"));
+  document.getElementById("waste-slide-names").innerHTML = html;
+  document.getElementById("waste-slide-accent").style.background = a.types[0].color || "#7cb342";
+  document.getElementById("waste-slide-hint").innerHTML  =
+      escHtml(a.days === 0 ? tr("waste_hint_today") : tr("waste_hint"));
+  document.getElementById("waste-slide-date").innerHTML  = escHtml(_wasteFormatDate(a.date));
+  document.getElementById("overlay-date").innerHTML     = "";
+  document.getElementById("overlay-location").innerHTML = "";
+  document.getElementById("photo-counter").innerHTML    = "";
+  document.getElementById("waste-badge").className      = "";
+  document.getElementById("waste-slide").className      = "visible";
+  wasteSlideVisible = true;
+}
+
+function hideWasteSlide() {
+  document.getElementById("waste-slide").className = "";
+  wasteSlideVisible = false;
+}
+
+// ── Kalendár vývozu odpadu: editor ───────────────────────────────────────────
+var wdCfg      = null;   // pracovná kópia celého configu
+var wdTypes    = [];     // katalóg druhov odpadu zo servera
+var wdMaxRules = 40;
+var wdRule     = null;   // pracovná kópia práve editovaného pravidla
+var wdRuleIdx  = -1;     // index v wdCfg.rules, -1 = nové pravidlo
+
+function openWasteDialog() {
+  closeSettings();
+  document.getElementById("waste-dialog").style.display = "block";
+  document.getElementById("waste-main").style.display   = "block";
+  document.getElementById("waste-editor").style.display = "none";
+  document.getElementById("waste-dialog").scrollTop     = 0;
+  wdStatus("", "");
+  xhrGet("/waste/config", function(err, text) {
+    if (err) { wdStatus(tr("waste_save_err"), "err"); return; }
+    try {
+      var data   = JSON.parse(text);
+      wdCfg      = data.config || {};
+      wdTypes    = data.types  || [];
+      wdMaxRules = data.max_rules || 40;
+    } catch (e) { wdStatus(tr("waste_save_err"), "err"); return; }
+    if (!wdCfg.rules) { wdCfg.rules = []; }
+    wdRenderMain();
+  });
+}
+
+function closeWasteDialog() {
+  document.getElementById("waste-dialog").style.display = "none";
+  fetchWasteStatus();
+}
+
+function wdStatus(msg, cls) {
+  var el = document.getElementById("waste-status");
+  el.innerHTML = escHtml(msg || "");
+  el.className = "wd-status" + (cls ? " " + cls : "");
+}
+
+function _seg(id, active) {
+  var el = document.getElementById(id);
+  if (el) { el.className = "wd-opt" + (active ? " active" : ""); }
+}
+
+function wdSetEnabled(on) { wdCfg.enabled = !!on; wdRenderMain(); }
+function wdSetMode(m)     { wdCfg.mode = m;      wdRenderMain(); }
+
+function wdStep(key, delta, lo, hi) {
+  var v = (parseInt(wdCfg[key], 10) || 0) + delta;
+  if (v < lo) { v = lo; }
+  if (v > hi) { v = hi; }
+  wdCfg[key] = v;
+  if (key === "days_before" && v === 0) { wdCfg.show_on_day = true; }
+  wdRenderMain();
+}
+
+function wdToggleShowOnDay() {
+  if (wdCfg.days_before === 0) { return; }   // inak by sa nezobrazilo nikdy nič
+  wdCfg.show_on_day = !wdCfg.show_on_day;
+  wdRenderMain();
+}
+
+function wdRenderMain() {
+  _seg("waste-en-on",  wdCfg.enabled);
+  _seg("waste-en-off", !wdCfg.enabled);
+  _seg("waste-mode-overlay", wdCfg.mode === "overlay");
+  _seg("waste-mode-slide",   wdCfg.mode === "slide");
+  _seg("waste-mode-both",    wdCfg.mode === "both");
+  document.getElementById("waste-interval-group").style.display =
+      (wdCfg.mode === "overlay") ? "none" : "";
+  document.getElementById("waste-interval-val").innerHTML = wdCfg.photo_interval;
+  document.getElementById("waste-days-val").innerHTML     = wdCfg.days_before;
+  document.getElementById("waste-hour-val").innerHTML     = _pad2(wdCfg.start_hour) + ":00";
+  document.getElementById("waste-showday-check").className =
+      "wd-check" + (wdCfg.show_on_day ? " on" : "");
+  wdRenderRules();
+  wdRenderPreview();
+}
+
+function wdTypeInfo(id) {
+  for (var i = 0; i < wdTypes.length; i++) {
+    if (wdTypes[i].id === id) { return wdTypes[i]; }
+  }
+  return { id: id, label: id, icon: "♻️", color: "#9aa5b1" };
+}
+
+// Slovenčina skloňuje 1 / 2–4 / 5+ inak; ostatné jazyky použijú rovnaký tvar.
+function wdCountLabel(n) {
+  if (n === 1)              { return trf("waste_dates_one",  [n]); }
+  if (n >= 2 && n <= 4)     { return trf("waste_dates_few",  [n]); }
+  return trf("waste_dates_many", [n]);
+}
+
+function wdRuleSummary(rule) {
+  var rec = rule.recurrence || {}, out = "";
+  if (rec.kind === "weekly") {
+    var n = rec.interval_weeks || 1;
+    out = WEEKDAYS[rec.weekday || 0] + " · " +
+          (n === 1 ? tr("waste_every_week") : trf("waste_every_n_weeks", [n]));
+  } else if (rec.kind === "monthly") {
+    if (rec.monthly_by === "day") {
+      out = tr("waste_day_of_month") + ": " + (rec.day_of_month || 1) + ".";
+    } else {
+      out = WEEK_ORDINALS["" + (rec.week_of_month || 1)] + " " +
+            WEEKDAYS[rec.weekday || 0].toLowerCase();
+    }
+    if (rec.months && rec.months.length) {
+      var mm = [];
+      for (var i = 0; i < rec.months.length; i++) { mm.push(MONTHS_LIST[rec.months[i] - 1].substr(0, 3)); }
+      out += " (" + mm.join(", ") + ")";
+    }
+  } else {
+    out = wdCountLabel((rec.dates || []).length);
+  }
+  if ((rule.extra || []).length) { out += " +" + rule.extra.length; }
+  if ((rule.skip  || []).length) { out += " −" + rule.skip.length; }
+  return out;
+}
+
+function wdRenderRules() {
+  var host = document.getElementById("waste-rule-list");
+  var rules = wdCfg.rules || [];
+  if (!rules.length) {
+    host.innerHTML = "<div class=\"wd-empty\">" + escHtml(tr("waste_no_rules")) + "</div>";
+  } else {
+    var html = "";
+    for (var i = 0; i < rules.length; i++) {
+      var info = wdTypeInfo(rules[i].type);
+      var name = rules[i].label || info.label;
+      html += "<div class=\"wd-rule\" style=\"border-left-color:" + escHtml(info.color) + "\""
+            + " onclick=\"wdEditRule(" + i + ")\">"
+            + "<div class=\"wr-ico\">" + escHtml(info.icon) + "</div>"
+            + "<div class=\"wr-txt\"><div class=\"wr-name\">" + escHtml(name) + "</div>"
+            + "<div class=\"wr-sub\">" + escHtml(wdRuleSummary(rules[i])) + "</div></div>"
+            + "<div class=\"wr-go\">&#8250;</div></div>";
+    }
+    host.innerHTML = html;
+  }
+  var addBtn = document.getElementById("t-waste-add-rule");
+  addBtn.style.display = (rules.length >= wdMaxRules) ? "none" : "";
+}
+
+// Náhľad ukazuje ULOŽENÝ harmonogram (rozvinutý serverom), nie rozpracované zmeny.
+function wdRenderPreview() {
+  var host = document.getElementById("waste-preview-list");
+  if (!wasteUpcoming.length) {
+    host.innerHTML = "<div class=\"wd-empty\">" + escHtml(tr("waste_preview_none")) + "</div>";
+    return;
+  }
+  var todayIso = _isoLocal(new Date()), html = "", shown = 0;
+  for (var i = 0; i < wasteUpcoming.length && shown < 6; i++) {
+    if (wasteUpcoming[i].date < todayIso) { continue; }
+    shown++;
+    html += "<div class=\"wd-preview-day\"><div class=\"wp-date\">"
+          + escHtml(_wasteFormatDate(wasteUpcoming[i].date)) + "</div>"
+          + "<div class=\"wp-types\">"
+          + escHtml(wasteIcons(wasteUpcoming[i].types) + " " +
+                    wasteNames(wasteUpcoming[i].types).join(", "))
+          + "</div></div>";
+  }
+  host.innerHTML = shown ? html
+      : "<div class=\"wd-empty\">" + escHtml(tr("waste_preview_none")) + "</div>";
+}
+
+function wdSaveConfig() {
+  wdStatus("…", "");
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", "/waste/config", true);
+  xhr.setRequestHeader("Content-Type", "application/json");
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) { return; }
+    if (xhr.status !== 200) { wdStatus(tr("waste_save_err"), "err"); return; }
+    try {
+      var data = JSON.parse(xhr.responseText);
+      if (data.config) { wdCfg = data.config; if (!wdCfg.rules) { wdCfg.rules = []; } }
+    } catch (e) {}
+    wdStatus(tr("waste_saved"), "ok");
+    // po uložení si vypýtaj rozvinutý harmonogram, nech sedí náhľad aj rámik
+    xhrGet("/waste/status", function(err2, text2) {
+      if (!err2) {
+        try {
+          var st = JSON.parse(text2);
+          wasteCfg      = st;
+          wasteUpcoming = st.upcoming || [];
+          wasteByDate   = {};
+          for (var i = 0; i < wasteUpcoming.length; i++) {
+            wasteByDate[wasteUpcoming[i].date] = wasteUpcoming[i].types || [];
+          }
+        } catch (e2) {}
+      }
+      updateWasteBadge();
+      wdRenderMain();
+    });
+  };
+  xhr.send(JSON.stringify(wdCfg));
+}
+
+// ── Editor jedného zvozu ─────────────────────────────────────────────────────
+function _newRuleId() {
+  return "r" + Date.now().toString(36) + Math.floor(Math.random() * 1000).toString(36);
+}
+
+function wdNewRule() {
+  wdRuleIdx = -1;
+  wdRule = {
+    id: _newRuleId(), type: (wdTypes[0] ? wdTypes[0].id : "mixed"), label: "",
+    recurrence: { kind: "weekly", weekday: 0, interval_weeks: 1, anchor: "", months: [] },
+    from: "", to: "", skip: [], extra: []
+  };
+  wdOpenEditor();
+}
+
+function wdEditRule(idx) {
+  wdRuleIdx = idx;
+  var src = wdCfg.rules[idx];
+  var rec = src.recurrence || {};
+  wdRule = {
+    id: src.id || _newRuleId(), type: src.type, label: src.label || "",
+    recurrence: {
+      kind:           rec.kind || "weekly",
+      weekday:        rec.weekday || 0,
+      interval_weeks: rec.interval_weeks || 1,
+      anchor:         rec.anchor || "",
+      week_of_month:  rec.week_of_month || 1,
+      day_of_month:   rec.day_of_month || 1,
+      monthly_by:     rec.monthly_by || "weekday",
+      months:         (rec.months || []).slice(0),
+      dates:          (rec.dates  || []).slice(0)
+    },
+    from: src.from || "", to: src.to || "",
+    skip: (src.skip || []).slice(0), extra: (src.extra || []).slice(0)
+  };
+  wdOpenEditor();
+}
+
+function wdOpenEditor() {
+  document.getElementById("waste-main").style.display   = "none";
+  document.getElementById("waste-editor").style.display = "block";
+  document.getElementById("waste-dialog").scrollTop     = 0;
+  document.getElementById("t-waste-rule-delete").style.display = (wdRuleIdx < 0) ? "none" : "";
+  document.getElementById("waste-name-input").value  = wdRule.label || "";
+  document.getElementById("waste-from-input").value  = wdRule.from  || "";
+  document.getElementById("waste-to-input").value    = wdRule.to    || "";
+  document.getElementById("waste-anchor-input").value = wdRule.recurrence.anchor || "";
+  wdBuildTypeSeg();
+  wdBuildWeekdaySegs();
+  wdBuildWomSelect();
+  wdBuildMonthChips();
+  wdRenderEditor();
+}
+
+function wdBuildTypeSeg() {
+  var host = document.getElementById("waste-type-seg"), html = "";
+  for (var i = 0; i < wdTypes.length; i++) {
+    var t = wdTypes[i];
+    html += "<div class=\"wd-opt\" id=\"wd-type-" + escHtml(t.id) + "\""
+          + " onclick=\"wdSetType('" + escHtml(t.id) + "')\">"
+          + "<div style=\"font-size:24px;line-height:1.2\">" + escHtml(t.icon) + "</div>"
+          + "<div style=\"font-size:11px;margin-top:3px\">" + escHtml(t.label) + "</div></div>";
+  }
+  host.innerHTML = html;
+}
+
+function wdBuildWeekdaySegs() {
+  var html = "";
+  for (var i = 0; i < 7; i++) {
+    html += "<div class=\"wd-opt\" id=\"__PFX__" + i + "\" onclick=\"wdSetWeekday(" + i + ")\">"
+          + escHtml(WEEKDAYS_SHORT[i]) + "</div>";
+  }
+  document.getElementById("waste-weekday-seg").innerHTML  = html.replace(/__PFX__/g, "wd-wd-");
+  document.getElementById("waste-weekday-seg2").innerHTML = html.replace(/__PFX__/g, "wd-wd2-");
+}
+
+function wdBuildWomSelect() {
+  var sel = document.getElementById("waste-wom-select"), html = "";
+  var order = ["1", "2", "3", "4", "5", "-1"];
+  for (var i = 0; i < order.length; i++) {
+    html += "<option value=\"" + order[i] + "\">" + escHtml(WEEK_ORDINALS[order[i]]) + "</option>";
+  }
+  sel.innerHTML = html;
+}
+
+function wdBuildMonthChips() {
+  var host = document.getElementById("waste-months-chips"), html = "";
+  for (var m = 1; m <= 12; m++) {
+    html += "<div class=\"wd-chip month\" id=\"wd-month-" + m + "\" onclick=\"wdToggleMonth(" + m + ")\">"
+          + escHtml(MONTHS_LIST[m - 1].substr(0, 3)) + "</div>";
+  }
+  host.innerHTML = html;
+}
+
+function wdSetType(id)  { wdRule.type = id; wdRenderEditor(); }
+function wdSetKind(k)   { wdRule.recurrence.kind = k; wdRenderEditor(); }
+function wdSetWeekday(i){ wdRule.recurrence.weekday = i; wdRenderEditor(); }
+function wdSetMonthlyBy(v) { wdRule.recurrence.monthly_by = v; wdRenderEditor(); }
+function wdReadWom()    { wdRule.recurrence.week_of_month = parseInt(document.getElementById("waste-wom-select").value, 10); }
+function wdReadAnchor() { wdRule.recurrence.anchor = _wdCleanDate(document.getElementById("waste-anchor-input").value); }
+function wdReadRange()  {
+  wdRule.from = _wdCleanDate(document.getElementById("waste-from-input").value);
+  wdRule.to   = _wdCleanDate(document.getElementById("waste-to-input").value);
+}
+
+function wdStepRule(key, delta, lo, hi) {
+  var v = (parseInt(wdRule.recurrence[key], 10) || 0) + delta;
+  if (v < lo) { v = lo; }
+  if (v > hi) { v = hi; }
+  wdRule.recurrence[key] = v;
+  wdRenderEditor();
+}
+
+function wdToggleMonth(m) {
+  var arr = wdRule.recurrence.months || [], idx = -1;
+  for (var i = 0; i < arr.length; i++) { if (arr[i] === m) { idx = i; break; } }
+  if (idx >= 0) { arr.splice(idx, 1); } else { arr.push(m); arr.sort(function(a, b) { return a - b; }); }
+  wdRule.recurrence.months = arr;
+  wdRenderEditor();
+}
+
+function _wdCleanDate(v) {
+  v = (v || "").replace(/^\s+|\s+$/g, "");
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "";
+}
+
+function _wdListFor(which) {
+  return (which === "dates") ? (wdRule.recurrence.dates = wdRule.recurrence.dates || [])
+       : (which === "skip")  ? (wdRule.skip  = wdRule.skip  || [])
+                             : (wdRule.extra = wdRule.extra || []);
+}
+
+function wdAddDate(which) {
+  var input = document.getElementById("waste-" + (which === "dates" ? "date" : which) + "-input");
+  var v = _wdCleanDate(input.value);
+  if (!v) { return; }
+  var list = _wdListFor(which);
+  for (var i = 0; i < list.length; i++) { if (list[i] === v) { input.value = ""; return; } }
+  list.push(v);
+  list.sort();
+  input.value = "";
+  wdRenderEditor();
+}
+
+function wdRemoveDate(which, iso) {
+  var list = _wdListFor(which);
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] === iso) { list.splice(i, 1); break; }
+  }
+  wdRenderEditor();
+}
+
+function _wdRenderChips(hostId, which, list) {
+  var host = document.getElementById(hostId), html = "";
+  for (var i = 0; i < list.length; i++) {
+    html += "<div class=\"wd-chip\" onclick=\"wdRemoveDate('" + which + "','" + escHtml(list[i]) + "')\">"
+          + escHtml(list[i]) + "<span class=\"wc-x\">&times;</span></div>";
+  }
+  host.innerHTML = html;
+}
+
+function wdRenderEditor() {
+  var rec = wdRule.recurrence;
+  for (var i = 0; i < wdTypes.length; i++) {
+    _seg("wd-type-" + wdTypes[i].id, wdTypes[i].id === wdRule.type);
+  }
+  _seg("waste-kind-weekly",  rec.kind === "weekly");
+  _seg("waste-kind-monthly", rec.kind === "monthly");
+  _seg("waste-kind-dates",   rec.kind === "dates");
+  document.getElementById("waste-weekly-box").style.display  = (rec.kind === "weekly")  ? "" : "none";
+  document.getElementById("waste-monthly-box").style.display = (rec.kind === "monthly") ? "" : "none";
+  document.getElementById("waste-dates-box").style.display   = (rec.kind === "dates")   ? "" : "none";
+
+  for (var w = 0; w < 7; w++) {
+    _seg("wd-wd-"  + w, w === rec.weekday);
+    _seg("wd-wd2-" + w, w === rec.weekday);
+  }
+  document.getElementById("waste-weeks-val").innerHTML = rec.interval_weeks || 1;
+  document.getElementById("waste-anchor-group").style.display = ((rec.interval_weeks || 1) > 1) ? "" : "none";
+
+  _seg("waste-by-weekday", rec.monthly_by !== "day");
+  _seg("waste-by-day",     rec.monthly_by === "day");
+  document.getElementById("waste-by-weekday-box").style.display = (rec.monthly_by === "day") ? "none" : "";
+  document.getElementById("waste-by-day-box").style.display     = (rec.monthly_by === "day") ? "" : "none";
+  document.getElementById("waste-wom-select").value = "" + (rec.week_of_month || 1);
+  document.getElementById("waste-dom-val").innerHTML = rec.day_of_month || 1;
+
+  var months = rec.months || [];
+  for (var m = 1; m <= 12; m++) {
+    var on = false;
+    for (var k = 0; k < months.length; k++) { if (months[k] === m) { on = true; break; } }
+    var chip = document.getElementById("wd-month-" + m);
+    if (chip) { chip.className = "wd-chip month" + (on ? " on" : ""); }
+  }
+
+  _wdRenderChips("waste-dates-chips", "dates", rec.dates || []);
+  _wdRenderChips("waste-skip-chips",  "skip",  wdRule.skip  || []);
+  _wdRenderChips("waste-extra-chips", "extra", wdRule.extra || []);
+}
+
+function wdCommitRule() {
+  var rec = wdRule.recurrence;
+  wdRule.label = document.getElementById("waste-name-input").value.replace(/^\s+|\s+$/g, "");
+  wdReadRange();
+  if (rec.kind === "weekly") {
+    wdReadAnchor();
+    // bez referenčného dátumu sa fáza „každý N-tý týždeň“ nedá určiť
+    if ((rec.interval_weeks || 1) > 1 && !rec.anchor) {
+      document.getElementById("waste-anchor-input").focus();
+      return;
+    }
+  } else if (rec.kind === "dates") {
+    if (!(rec.dates || []).length && !(wdRule.extra || []).length) {
+      document.getElementById("waste-date-input").focus();
+      return;
+    }
+  }
+  if (wdRuleIdx < 0) { wdCfg.rules.push(wdRule); }
+  else               { wdCfg.rules[wdRuleIdx] = wdRule; }
+  wdCloseEditor();
+}
+
+function wdCancelRule() { wdCloseEditor(); }
+
+function wdDeleteRule() {
+  if (wdRuleIdx >= 0) { wdCfg.rules.splice(wdRuleIdx, 1); }
+  wdCloseEditor();
+}
+
+function wdCloseEditor() {
+  wdRule = null; wdRuleIdx = -1;
+  document.getElementById("waste-editor").style.display = "none";
+  document.getElementById("waste-main").style.display   = "block";
+  document.getElementById("waste-dialog").scrollTop     = 0;
+  wdStatus("", "");
+  wdRenderMain();
 }
 
 // ── Swipe + dlhý tap ──────────────────────────────────────────────────────────
@@ -1944,6 +3269,7 @@ applyTranslations();
 checkSleep();
 loadAlbums();
 fetchWeatherStatus();
+fetchWasteStatus();
 </script>
 </body>
 </html>"""
@@ -1953,6 +3279,10 @@ fetchWeatherStatus();
     html = html.replace("__SLEEP_START__",    SLEEP_START)
     html = html.replace("__SLEEP_END__",      SLEEP_END)
     html = html.replace("__WEATHER_INTERVAL__", str(WEATHER_PHOTO_INTERVAL))
+    html = html.replace("__WEEKDAYS__",       json_module.dumps(WEEKDAYS[lang], ensure_ascii=False))
+    html = html.replace("__WEEKDAYS_SHORT__", json_module.dumps(WEEKDAYS_SHORT[lang], ensure_ascii=False))
+    html = html.replace("__MONTHS_LIST__",    json_module.dumps(MONTHS[lang], ensure_ascii=False))
+    html = html.replace("__WEEK_ORDINALS__",  json_module.dumps(WEEK_ORDINALS[lang], ensure_ascii=False))
     resp = Response(html, mimetype="text/html; charset=utf-8")
     # Nekešuj HTML (obsahuje všetok CSS/JS) – nástenný displej tak vždy dostane
     # aktuálnu verziu po update/rebuild bez ručného čistenia cache v Safari.

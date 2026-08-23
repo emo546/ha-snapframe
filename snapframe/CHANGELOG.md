@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.0] – 2026
+
+### Added
+- **Waste collection calendar** – set up which days of the year each waste type is collected (mixed, bio, plastic, paper, glass, metal, drink cartons, e-waste, bulky, other) and the frame reminds you the day before, so the bin actually makes it to the kerb.
+  - **Rules, not endless date lists.** Real municipal schedules are almost always *"every other Thursday"* or *"first Monday of the month"*, so a collection is defined as a rule: **every N weeks** on a weekday (with a reference date that fixes which week is the right one), **monthly** by position (*first / last Monday…*, optionally limited to certain months) or by day number, or a plain **list of specific dates** for irregular pickups. Every rule can additionally have a validity range (*valid from / until*), **exceptions** (public holidays – no collection) and **extra one-off dates**.
+  - **Two reminder styles, configurable** – a discreet **corner badge** shown on top of the photos the whole time, a **full-screen reminder** injected every *N* photos (same pattern as the weather screen), or both at once.
+  - **Configurable lead time** – remind 0–7 days ahead, optionally also on the collection day itself, and optionally only from a given hour (so the "tomorrow" reminder doesn't nag from 6 a.m.).
+  - **Set up entirely in the app** – a full editor behind Settings → *Waste collection…*, so no add-on restart and no hand-editing YAML with dozens of dates. The schedule is stored in `/data/waste_schedule.json` and shared by every tablet pointed at the add-on.
+  - The frame decides what "tomorrow" means using the *tablet's* local time, not the container's – the server only ships the expanded list of upcoming collection days, so a container running in UTC can't shift the reminder by a day.
+- New endpoints: `GET`/`POST` `/waste/config`, `GET /waste/status`, and `GET /waste/next` – the last one is shaped for a Home Assistant REST sensor (`state` is the next collection date, with `days_until` and the waste types), so you can also send a phone notification or drive automations from the same schedule.
+- Slovak, English and German translations for the whole feature, including waste-type names and human-readable rule summaries.
+- **Unit tests** for the schedule engine (`tests/test_waste.py`, 30 cases covering recurrence phases, month-edge cases, exceptions/extras and config sanitisation) plus a CI step that runs them.
+
+### Changed
+- The weather screen and the waste reminder never overlap: while the weather screen is up (or during night mode, or outside the slideshow) the corner badge stays hidden, and each keeps its own photo counter so both interleave cleanly.
+
 ## [2.9.1] – 2026
 
 ### Fixed
