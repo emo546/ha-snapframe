@@ -587,6 +587,16 @@ EXIF metadata is read from the JPG files. GPS coordinates are reverse-geocoded v
 - SnapFrame's server-side code copies whatever EXIF it's given untouched, so this cannot be fixed from the add-on side — it happens on the device before the file ever reaches SnapFrame.
 - Workaround: upload those photos via the SMB share instead (copy from Files/Finder, or drag-and-drop onto the share), or AirDrop them to a computer first and copy from there — both preserve the original file, including full-precision GPS.
 
+**Schedule import finds nothing / "No collection calendar could be found"**
+- The parser reads **vector** PDFs — the kind your municipality generates from a spreadsheet or design tool. A PDF that is just a *scanned photo* of a leaflet contains no text or shapes to read, only pixels.
+- Check quickly: open the PDF and try to select a day number with the mouse. If the text highlights, it's a vector PDF and the parser should handle it; if nothing selects, it's a scan.
+- For scans and phone photos, set `anthropic_api_key` in the add-on configuration to enable the fallback (see [Importing the municipal schedule](#importing-the-municipal-schedule)), or add the dates by hand — the recurrence rules mean a typical schedule is two or three rules, not fifty dates.
+- The parser also needs the calendar rows to be labelled with **ISO week numbers** (`1.`, `2.`, …) and the columns with weekday abbreviations, which is how these leaflets are almost always laid out. A calendar without week numbers won't be recognised.
+
+**Schedule import found the days but the colours map to the wrong waste type**
+- The suggested type is only a guess from the colour — every municipality uses its own palette. Change the type in the dropdown next to each series before adding it; the suggestion is never applied without your confirmation.
+- If one waste type appears split into two series, that is usually intentional: the leaflet is carrying two different rounds (e.g. fortnightly and monthly), or a coloured border marks an add-on day. Pick the aggregate series (listed first, "all days where this colour appears") if you want everything, or the specific fill/outline combination if you're on one of the variants.
+
 **Weather screen never appears / motion doesn't trigger it**
 - Confirm the Home Assistant automation actually fired: check **Settings → Automations → (your automation) → Traces**
 - Call `curl -X POST http://YOUR_HA_IP:8099/weather-mode/on` manually and then check `GET /weather` — if `active` becomes `true`, the add-on side is working and the issue is in the automation/motion sensor
@@ -601,6 +611,9 @@ EXIF metadata is read from the JPG files. GPS coordinates are reverse-geocoded v
 - The web interface has **no authentication by default** – it is intended for use on a trusted local network. Enable `basic_auth_user` / `basic_auth_password` if you expose it externally.
 - The `/weather-mode/*` and `/weather-update` endpoints have no authentication beyond whatever `basic_auth_user`/`basic_auth_password` you've set — if you enable Basic Auth, remember to add the credentials to your `rest_command` definitions too (`headers: {Authorization: "Basic ..."}`).
 - SnapFrame never calls out to the Home Assistant API and needs no `homeassistant_api`/`hassio_api` permission or long-lived token — all HA integration is one-directional (HA → SnapFrame) via plain REST calls you configure yourself.
+- **Only one feature can send data off your network, and it is off by default.** With `anthropic_api_key` set, the schedule import falls back to sending the *uploaded schedule file* to Anthropic's API when the local PDF parser can't read it — see [Importing the municipal schedule](#importing-the-municipal-schedule). Nothing else in SnapFrame makes outbound calls except the optional Nominatim reverse-geocoding lookup for the photo location overlay. Your photos are never sent anywhere. Leave `anthropic_api_key` empty and SnapFrame stays entirely on your LAN; the PDF parser itself needs no key and no internet.
+- SnapFrame itself never stores an uploaded schedule: it is read, parsed, and dropped, and only the dates you confirm are saved (into `/data/waste_schedule.json`). Note that uploads larger than ~500 KB are buffered by the web server into a temporary file inside the container while the request is being handled; that file is removed as soon as the request finishes and never leaves the container.
+- `POST /waste/import` and `POST /waste/config` are protected only by whatever `basic_auth_user`/`basic_auth_password` you've set, like every other endpoint. Uploads are capped at 12 MB and the saved schedule is validated and clamped server-side (rule count, date count, value ranges), so a malformed or hostile request can't grow the stored config without bound.
 - The geocoding cache (`/data/geocode_cache.json`) stores GPS coordinates rounded to 2 decimal places (~1 km precision). It does not contain any other personal data.
 
 ---

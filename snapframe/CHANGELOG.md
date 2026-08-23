@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - New config option: `anthropic_api_key` (optional, empty by default).
 - New endpoint: `POST /waste/import` (returns detected series; saves nothing).
 - 15 further unit tests covering the parser, built on generated PDFs whose marked days are known exactly.
+- Documentation: a full *Importing the municipal schedule* section, troubleshooting entries for a schedule that can't be read or whose colours map to the wrong type, and security notes covering the one optional feature that can send data off your network.
 
 ### Fixed
 - The grid-cell radius used when matching colour marks to days is now derived from the page's own row/column pitch instead of a fixed point value, so the same schedule laid out at a different page size no longer risks attaching a mark to the neighbouring day.
