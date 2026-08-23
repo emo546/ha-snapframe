@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.2] – 2026
+
+### Changed
+
+- **Opening a large album took a long time to start playing.** Listing photos still did a filesystem check per file to see whether the 3.0.0 photo index was up to date — `Path.iterdir()` + `.is_file()` + `.stat()` + `.resolve()`, none of which cache anything, so each photo cost two to four round trips to the SMB share before the slideshow could even ask for the first image. Listing now uses `os.scandir()`, whose `DirEntry` remembers its own `stat()` result, cutting that to about one round trip per photo. Measured with a simulated 3 ms per-call network delay (representative of a real CIFS share) and 400 photos: 6.3 s → 0.04 s to list the same album, byte-identical result.
+- The same change also means the trash folder (`_kos`) is no longer walked at all when listing "all photos" or counting an album on the selection screen — previously every file in it was visited and then discarded by path, which got slower the fuller the trash was.
+- 5 new tests cover the scan behaviour directly: hidden folders are never descended into (not just filtered afterwards), an album listing still doesn't recurse into subfolders, the "all photos" view still does, trash doesn't count toward an album's photo count, and a 150-photo album lists every file. 88 → 93 tests.
+
 ## [3.0.1] – 2026
 
 ### Fixed

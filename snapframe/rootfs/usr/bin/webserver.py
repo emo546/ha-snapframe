@@ -757,6 +757,37 @@ def reverse_geocode(lat, lon, lang):
 
 # ── Foto helpers ──────────────────────────────────────────────────────────────
 
+def _iter_photo_entries(root: Path, recursive: bool):
+    """Prejde priečinok cez os.scandir a vráti DirEntry pre každú fotku.
+
+    Path.iterdir() + Path.is_file() + Path.stat() + Path.resolve() sú štyri
+    samostatné syscally na súbor a Path si stat NEPAMÄTÁ – zavoláš ho dvakrát,
+    ideš na disk (na SMB share teda po sieti) dvakrát. os.scandir() vráti
+    DirEntry, ktorý si prvý stat() zapamätá, takže is_file()+stat() na tú istú
+    položku stojí jeden dopyt namiesto dvoch či troch. Pri albume s tisíckami
+    fotiek na sieťovom shari je to rozdiel v desiatkach sekúnd pred prvým
+    zobrazeným snímkom.
+
+    Skryté priečinky (_kos, _thumbs) sa preskočia bez toho, aby sa do nich
+    vôbec vstúpilo – predtým sa prešli všetky súbory v koši a až potom sa
+    zahodili podľa cesty, čo je zbytočné pri väčšom koši.
+    """
+    try:
+        entries = list(os.scandir(root))
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if entry.is_dir():
+                if recursive and entry.name not in HIDDEN_DIRS:
+                    yield from _iter_photo_entries(Path(entry.path), True)
+                continue
+            if entry.is_file() and Path(entry.name).suffix.lower() in ALLOWED_EXT:
+                yield entry
+        except OSError:
+            continue
+
+
 def list_albums():
     folder = Path(OUTPUT_FOLDER)
     if not folder.exists():
@@ -764,8 +795,7 @@ def list_albums():
     result = []
     for d in sorted(folder.iterdir()):
         if d.is_dir() and d.name not in HIDDEN_DIRS:
-            count = sum(1 for f in d.iterdir()
-                        if f.is_file() and f.suffix.lower() in ALLOWED_EXT)
+            count = sum(1 for _ in _iter_photo_entries(d, recursive=False))
             result.append({"name": d.name, "count": count})
     return result
 
@@ -778,29 +808,27 @@ def list_photos(album=""):
         search = folder / album
         if not search.is_dir():
             return []
-        files = [f for f in search.iterdir()
-                 if f.is_file() and f.suffix.lower() in ALLOWED_EXT]
+        entries = list(_iter_photo_entries(search, recursive=False))
     else:
-        files  = [f for f in folder.rglob("*")
-                  if f.is_file() and f.suffix.lower() in ALLOWED_EXT
-                  and not any(p in HIDDEN_DIRS for p in f.relative_to(folder).parts)]
+        entries = list(_iter_photo_entries(folder, recursive=True))
+
     # Jeden dotaz do indexu namiesto otvárania každej fotky cez sieť.
     known = _index.all_dates() if _has_index else {}
-    base  = Path(OUTPUT_FOLDER).resolve()
 
-    def sort_key(f):
+    def sort_key(entry):
         try:
-            mtime = f.stat().st_mtime
+            mtime = entry.stat().st_mtime      # z DirEntry cache – bez syscallu navyše
         except OSError:
             return 0.0
-        row = known.get(str(f.resolve().relative_to(base))) if known else None
+        rel = os.path.relpath(entry.path, folder)
+        row = known.get(rel) if known else None
         if row is not None and abs(row[0] - mtime) <= 0.001:
             return row[1] if row[1] else mtime
-        d = _photo_meta(f)[0]        # doplní index pre novú/zmenenú fotku
+        d = _photo_meta(Path(entry.path))[0]   # doplní index pre novú/zmenenú fotku
         return d.timestamp() if d is not None else mtime
 
-    files.sort(key=sort_key)
-    return [str(f.relative_to(folder)) for f in files]
+    entries.sort(key=sort_key)
+    return [os.path.relpath(e.path, folder) for e in entries]
 
 # ── Thumbnail helper ──────────────────────────────────────────────────────────
 
