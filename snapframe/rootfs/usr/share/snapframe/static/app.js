@@ -245,6 +245,30 @@ function checkSleep() {
 }
 setInterval(checkSleep, 60000);
 
+// ── API token ─────────────────────────────────────────────────────────────────
+// Ak je add-on nakonfigurovaný s api_token, zápisové endpointy ho vyžadujú.
+// Čítanie ostáva otvorené, takže rám sa rozbehne aj bez neho – token si appka
+// vypýta až keď sa niečo naozaj mení (upload, mazanie, uloženie kalendára).
+var TOKEN_KEY = "snapframe_api_token";
+
+function apiToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; }
+}
+function setApiToken(t) {
+  try { localStorage.setItem(TOKEN_KEY, t || ""); } catch (e) {}
+}
+function withToken(xhr) {
+  var t = apiToken();
+  if (t) { xhr.setRequestHeader("X-SnapFrame-Token", t); }
+}
+/** Vráti true, ak požiadavka zlyhala na tokene – vtedy si ho vypýta a zopakuje ju. */
+function tokenRetry(xhr, retry) {
+  if (xhr.status !== 401) { return false; }
+  var t = window.prompt(tr("token_prompt"), apiToken());
+  if (t !== null && t !== "") { setApiToken(t.replace(/^\s+|\s+$/g, "")); retry(); }
+  return true;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function xhrGet(url, cb) {
   var xhr = new XMLHttpRequest();
@@ -270,8 +294,10 @@ function triggerScan() {
   var btn = document.getElementById("scan-btn");
   var xhr = new XMLHttpRequest();
   xhr.open("POST", "/scan", true);
+  withToken(xhr);
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) { return; }
+    if (tokenRetry(xhr, triggerScan)) { return; }
     btn.textContent = tr("scan_started");
     btn.className = "scan-btn done";
     setTimeout(function() {
@@ -850,8 +876,10 @@ function wdSaveConfig() {
   var xhr = new XMLHttpRequest();
   xhr.open("POST", "/waste/config", true);
   xhr.setRequestHeader("Content-Type", "application/json");
+  withToken(xhr);
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) { return; }
+    if (tokenRetry(xhr, wdSaveConfig)) { return; }
     if (xhr.status !== 200) { wdStatus(tr("waste_save_err"), "err"); return; }
     try {
       var data = JSON.parse(xhr.responseText);
@@ -929,8 +957,10 @@ function wimpUpload(input) {
   fd.append("file", input.files[0]);
   var xhr = new XMLHttpRequest();
   xhr.open("POST", "/waste/import", true);
+  withToken(xhr);
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) { return; }
+    if (tokenRetry(xhr, function() { wimpUpload(input); })) { return; }
     var data = null;
     try { data = JSON.parse(xhr.responseText); } catch (e) {}
     if (!data || !data.ok) {
@@ -1301,8 +1331,11 @@ function confirmDelete() {
   var filename = photos[currentIndex];
   var xhr = new XMLHttpRequest();
   xhr.open("POST", "/delete/" + encodePath(filename), true);
+  withToken(xhr);
   xhr.onreadystatechange = function() {
-    if (xhr.readyState !== 4 || xhr.status !== 200) { return; }
+    if (xhr.readyState !== 4) { return; }
+    if (tokenRetry(xhr, confirmDelete)) { return; }
+    if (xhr.status !== 200) { return; }
     photos.splice(currentIndex, 1);
     if (!photos.length) {
       document.getElementById("photoA").className = "photo";
@@ -1406,8 +1439,10 @@ function _uploadNext(files, idx, album, errCount) {
   fd.append("file", files[idx]); fd.append("album", album);
   var xhr = new XMLHttpRequest();
   xhr.open("POST", "/upload", true);
+  withToken(xhr);
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) { return; }
+    if (tokenRetry(xhr, function() { _uploadNext(files, idx, album, errCount); })) { return; }
     _uploadNext(files, idx + 1, album, errCount + (xhr.status === 200 ? 0 : 1));
   };
   xhr.send(fd);

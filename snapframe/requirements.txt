@@ -1,0 +1,8 @@
+# Verzie sú zamknuté zámerne: add-on sa buildí na zariadení používateľa,
+# takže neuzamknutá závislosť by mohla rozbiť inštaláciu kedykoľvek.
+anthropic==1.0.0
+flask==3.1.3
+pdfplumber==0.11.10
+pillow==12.3.0
+pillow-heif==1.5.0
+waitress==3.0.2

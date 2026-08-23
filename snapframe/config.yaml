@@ -32,6 +32,7 @@ options:
   weather_photo_interval: 8
   weather_mode_duration_minutes: 120
   anthropic_api_key: ""
+  api_token: ""
 schema:
   smb_server: str
   smb_share: str
@@ -54,6 +55,7 @@ schema:
   weather_photo_interval: int(2,50)
   weather_mode_duration_minutes: int(5,720)
   anthropic_api_key: "password?"
+  api_token: "password?"
 ports:
   8099/tcp: 8099
 ports_description:

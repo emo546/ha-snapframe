@@ -21,6 +21,7 @@ SLEEP_END=$(bashio::config 'sleep_end')
 WEATHER_PHOTO_INTERVAL=$(bashio::config 'weather_photo_interval')
 WEATHER_MODE_DURATION_MIN=$(bashio::config 'weather_mode_duration_minutes')
 ANTHROPIC_API_KEY=$(bashio::config 'anthropic_api_key')
+API_TOKEN=$(bashio::config 'api_token')
 
 # bashio vracia "null" pre nové polia ktoré ešte nie sú v options – nahraď defaultmi
 [ "${THUMB_QUALITY}" = "null" ]      && THUMB_QUALITY="82"
@@ -33,6 +34,7 @@ ANTHROPIC_API_KEY=$(bashio::config 'anthropic_api_key')
 [ "${WEATHER_PHOTO_INTERVAL}" = "null" ]    && WEATHER_PHOTO_INTERVAL="8"
 [ "${WEATHER_MODE_DURATION_MIN}" = "null" ] && WEATHER_MODE_DURATION_MIN="120"
 [ "${ANTHROPIC_API_KEY}" = "null" ]           && ANTHROPIC_API_KEY=""
+[ "${API_TOKEN}" = "null" ]                   && API_TOKEN=""
 
 bashio::log.info "SMB server: ${SMB_SERVER}"
 bashio::log.info "SMB share: ${SMB_SHARE}"
@@ -92,12 +94,18 @@ export SLEEP_END
 export WEATHER_PHOTO_INTERVAL
 export WEATHER_MODE_DURATION_MIN
 export ANTHROPIC_API_KEY
+export API_TOKEN
 export PYTHONPATH="/usr/bin:${PYTHONPATH:-}"
 
 bashio::log.info "Slideshow interval: ${SLIDESHOW_SECONDS} s"
 bashio::log.info "Web port: ${WEB_PORT}"
 if [ -n "${BASIC_AUTH_USER}" ]; then
     bashio::log.info "HTTP Basic Auth zapnutá pre: ${BASIC_AUTH_USER}"
+fi
+if [ -n "${API_TOKEN}" ]; then
+    bashio::log.info "Zápisové endpointy vyžadujú API token"
+else
+    bashio::log.warning "api_token nie je nastavený – ktokoľvek v sieti môže nahrávať a mazať fotky"
 fi
 
 python3 /usr/bin/watcher.py

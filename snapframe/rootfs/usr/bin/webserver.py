@@ -13,6 +13,7 @@ Novinky v2.10: kalendár vývozu odpadu – termíny zvozov sa nastavia priamo v
               buď štítok v rohu, alebo celoobrazovkový slide medzi fotkami
 """
 
+import hmac
 import os
 import re
 import json as json_module
@@ -56,9 +57,12 @@ SLEEP_END       = _env_str("SLEEP_END",   "")         # "07:00" alebo ""
 WEATHER_PHOTO_INTERVAL   = _env_int("WEATHER_PHOTO_INTERVAL", 8)      # fotiek medzi weather slidmi
 WEATHER_MODE_DURATION_MIN = _env_int("WEATHER_MODE_DURATION_MIN", 120)  # min trvania po /weather-mode/on
 ANTHROPIC_API_KEY = _env_str("ANTHROPIC_API_KEY")   # nepovinné – záloha pre skeny/fotky harmonogramu
+API_TOKEN         = _env_str("API_TOKEN")           # nepovinný – chráni zápisové endpointy
 
 GEOCACHE_FILE = "/data/geocode_cache.json"
 ALLOWED_EXT   = (".jpg", ".jpeg", ".png")
+HIDDEN_DIRS   = {"_kos", "_thumbs"}
+PHOTO_MAX_AGE = 24 * 3600      # fotky/thumbnaily sa nemenia pod tým istým menom
 
 # HTML/CSS/JS rámu sú súbory, nie reťazce v tomto module – dajú sa lintovať
 # a prehliadač na tablete si CSS/JS nakešuje (viď ASSET_VERSION nižšie).
@@ -145,6 +149,7 @@ TRANSLATIONS = {
         "app_title":            "Fotorámik",
         "app_subtitle":         "FOTO RÁMIK",
         "scan_btn":             "\u21bb Skenuj teraz",
+        "token_prompt":         "Zadaj API token SnapFrame (add-on \u2192 api_token):",
         "scan_started":         "\u2713 Spusten\u00e9",
         "order_label":          "Poradie fotiek",
         "order_date":           "Chronologicky",
@@ -262,6 +267,7 @@ TRANSLATIONS = {
         "app_title":            "SnapFrame",
         "app_subtitle":         "PHOTO FRAME",
         "scan_btn":             "\u21bb Scan now",
+        "token_prompt":         "Enter the SnapFrame API token (add-on \u2192 api_token):",
         "scan_started":         "\u2713 Started",
         "order_label":          "Photo order",
         "order_date":           "Chronological",
@@ -379,6 +385,7 @@ TRANSLATIONS = {
         "app_title":            "SnapFrame",
         "app_subtitle":         "FOTO RAHMEN",
         "scan_btn":             "\u21bb Jetzt scannen",
+        "token_prompt":         "SnapFrame-API-Token eingeben (Add-on \u2192 api_token):",
         "scan_started":         "\u2713 Gestartet",
         "order_label":          "Reihenfolge",
         "order_date":           "Chronologisch",
@@ -640,10 +647,9 @@ def _load_exif(path: Path):
         return cached
     result = {"date": None, "gps": None}
     try:
-        img  = Image.open(path)
-        exif = img.getexif()
-        if exif:
-            for tag_id, value in exif.items():
+        with Image.open(path) as img:
+            exif = img.getexif()
+            for tag_id, value in (exif or {}).items():
                 tag = TAGS.get(tag_id, tag_id)
                 if tag in ("DateTimeOriginal", "DateTime", "DateTimeDigitized"):
                     try:
@@ -651,7 +657,7 @@ def _load_exif(path: Path):
                         break
                     except ValueError:
                         pass
-            gps_ifd = exif.get_ifd(0x8825)
+            gps_ifd = exif.get_ifd(0x8825) if exif else None
             if gps_ifd:
                 lat_ref = gps_ifd.get(1); lat = gps_ifd.get(2)
                 lon_ref = gps_ifd.get(3); lon = gps_ifd.get(4)
@@ -709,10 +715,9 @@ def list_albums():
     folder = Path(OUTPUT_FOLDER)
     if not folder.exists():
         return []
-    HIDDEN = {"_kos", "_thumbs"}
     result = []
     for d in sorted(folder.iterdir()):
-        if d.is_dir() and d.name not in HIDDEN:
+        if d.is_dir() and d.name not in HIDDEN_DIRS:
             count = sum(1 for f in d.iterdir()
                         if f.is_file() and f.suffix.lower() in ALLOWED_EXT)
             result.append({"name": d.name, "count": count})
@@ -722,6 +727,7 @@ def list_photos(album=""):
     folder = Path(OUTPUT_FOLDER)
     if not folder.exists():
         return []
+    album = safe_album(album)
     if album and album != "all":
         search = folder / album
         if not search.is_dir():
@@ -729,10 +735,9 @@ def list_photos(album=""):
         files = [f for f in search.iterdir()
                  if f.is_file() and f.suffix.lower() in ALLOWED_EXT]
     else:
-        HIDDEN = {"_kos", "_thumbs"}
         files  = [f for f in folder.rglob("*")
                   if f.is_file() and f.suffix.lower() in ALLOWED_EXT
-                  and not any(p in HIDDEN for p in f.relative_to(folder).parts)]
+                  and not any(p in HIDDEN_DIRS for p in f.relative_to(folder).parts)]
     def sort_key(f):
         d = get_exif_date(f)
         return d.timestamp() if d is not None else f.stat().st_mtime
@@ -742,10 +747,12 @@ def list_photos(album=""):
 # ── Thumbnail helper ──────────────────────────────────────────────────────────
 
 def _get_or_create_thumb(filename: str):
-    src        = Path(OUTPUT_FOLDER) / filename
-    if not src.is_file():
+    src = safe_photo_path(filename)
+    if src is None or not src.is_file():
         return None
-    thumb_path = Path(OUTPUT_FOLDER) / "_thumbs" / filename
+    thumb_path = safe_photo_path(str(Path("_thumbs") / filename))
+    if thumb_path is None:
+        return None
     try:
         if thumb_path.exists() and thumb_path.stat().st_mtime >= src.stat().st_mtime:
             return (str(thumb_path.parent), thumb_path.name)
@@ -753,8 +760,8 @@ def _get_or_create_thumb(filename: str):
         pass
     try:
         thumb_path.parent.mkdir(parents=True, exist_ok=True)
-        img = Image.open(src)
-        img = ImageOps.exif_transpose(img)
+        with Image.open(src) as raw:
+            img = ImageOps.exif_transpose(raw)
         img.thumbnail((THUMB_MAX_PX, THUMB_MAX_PX), Image.LANCZOS)
         if img.mode != "RGB":
             img = img.convert("RGB")
@@ -762,20 +769,69 @@ def _get_or_create_thumb(filename: str):
     except Exception as e:
         log.warning("Thumbnail chyba {}: {}".format(filename, e))
         if src.is_file():
-            return (OUTPUT_FOLDER, filename)
+            return (str(src.parent), src.name)
         return None
     return (str(thumb_path.parent), thumb_path.name)
 
+# ── Bezpečné cesty ────────────────────────────────────────────────────────────
+# Flask konvertor <path:…> prepustí do handlera aj "../.." (aj v %2e%2e forme),
+# takže každá cesta poskladaná z URL musí prejsť týmto helperom. send_from_directory
+# si síce robí vlastný safe_join, ale routy, ktoré s cestou ešte niečo robia
+# (mazanie, zápis thumbnailu, čítanie EXIF), by inak siahli mimo knižnice fotiek.
+
+def safe_photo_path(filename: str):
+    """Absolútna cesta k súboru v knižnici fotiek, alebo None ak vedie mimo nej."""
+    if not filename:
+        return None
+    base = Path(OUTPUT_FOLDER).resolve()
+    try:
+        target = (base / filename).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return None
+    if target != base and base not in target.parents:
+        return None
+    return target
+
+
+def safe_album(album: str) -> str:
+    """Názov albumu je vždy jediný priečinok priamo v knižnici – nikdy cesta."""
+    album = (album or "").strip().strip("/")
+    if not album or album in ("all", ".", ".."):
+        return "" if album != "all" else "all"
+    name = Path(album).name
+    if name in (".", "..") or name in HIDDEN_DIRS:
+        return ""
+    return name
+
+
 # ── Autentifikácia ────────────────────────────────────────────────────────────
+
+# Endpointy, ktoré niečo menia. Čítanie ostáva otvorené, aby rám na tablete
+# fungoval bez prihlásenia; zápis vyžaduje token, ak je nastavený.
+WRITE_ENDPOINTS = {
+    "upload_file", "delete_photo", "trigger_scan", "waste_config_save_route",
+    "waste_import_route", "weather_update_route", "weather_mode_on_route",
+    "weather_mode_off_route",
+}
+
+
+def _token_ok() -> bool:
+    supplied = request.headers.get("X-SnapFrame-Token", "") or request.args.get("token", "")
+    return hmac.compare_digest(supplied, API_TOKEN)
+
 
 @app.before_request
 def check_auth():
-    if not BASIC_AUTH_USER:
-        return
-    auth = request.authorization
-    if not auth or auth.username != BASIC_AUTH_USER or auth.password != BASIC_AUTH_PASS:
-        return Response("Unauthorized", 401,
-                        {"WWW-Authenticate": 'Basic realm="SnapFrame"'})
+    if BASIC_AUTH_USER:
+        auth = request.authorization
+        ok = (auth is not None
+              and hmac.compare_digest(auth.username or "", BASIC_AUTH_USER)
+              and hmac.compare_digest(auth.password or "", BASIC_AUTH_PASS))
+        if not ok:
+            return Response("Unauthorized", 401,
+                            {"WWW-Authenticate": 'Basic realm="SnapFrame"'})
+    if API_TOKEN and request.endpoint in WRITE_ENDPOINTS and not _token_ok():
+        return jsonify({"ok": False, "error": "token_required"}), 401
 
 # ── Upload helpers ────────────────────────────────────────────────────────────
 
@@ -810,25 +866,30 @@ def thumb(filename):
     result = _get_or_create_thumb(filename)
     if result is None:
         return ("not found", 404)
-    return send_from_directory(result[0], result[1])
+    return send_from_directory(result[0], result[1], max_age=PHOTO_MAX_AGE)
 
 @app.route("/album-cover/<path:album>")
 def album_cover(album):
-    photos = list_photos(album)
+    photos = list_photos(safe_album(album))
     if not photos:
         return ("", 404)
     result = _get_or_create_thumb(photos[0])
     if result is None:
         return ("", 404)
-    return send_from_directory(result[0], result[1])
+    return send_from_directory(result[0], result[1], max_age=PHOTO_MAX_AGE)
 
 @app.route("/photo/<path:filename>")
 def photo(filename):
-    return send_from_directory(OUTPUT_FOLDER, filename)
+    src = safe_photo_path(filename)
+    if src is None or not src.is_file():
+        return ("not found", 404)
+    return send_from_directory(str(src.parent), src.name, max_age=PHOTO_MAX_AGE)
 
 @app.route("/exif/<path:filename>")
 def exif_route(filename):
-    path      = Path(OUTPUT_FOLDER) / filename
+    path = safe_photo_path(filename)
+    if path is None:
+        return jsonify({"date": "", "location": ""}), 404
     date_str  = ""
     loc_str   = ""
     lang      = LANGUAGE if LANGUAGE in MONTHS else "sk"
@@ -844,10 +905,11 @@ def exif_route(filename):
 
 @app.route("/delete/<path:filename>", methods=["POST"])
 def delete_photo(filename):
-    src = Path(OUTPUT_FOLDER) / filename
-    if not src.is_file():
+    src = safe_photo_path(filename)
+    if src is None or not src.is_file():
         return jsonify({"ok": False, "error": "not found"}), 404
-    kos_dir = Path(OUTPUT_FOLDER) / "_kos" / Path(filename).parent
+    rel     = src.relative_to(Path(OUTPUT_FOLDER).resolve())
+    kos_dir = Path(OUTPUT_FOLDER) / "_kos" / rel.parent
     kos_dir.mkdir(parents=True, exist_ok=True)
     dest = kos_dir / src.name
     c = 1
@@ -855,7 +917,7 @@ def delete_photo(filename):
         dest = kos_dir / "{}_{}.{}".format(src.stem, c, src.suffix.lstrip("."))
         c += 1
     src.rename(dest)
-    thumb_p = Path(OUTPUT_FOLDER) / "_thumbs" / filename
+    thumb_p = Path(OUTPUT_FOLDER) / "_thumbs" / rel
     if thumb_p.exists():
         try: thumb_p.unlink()
         except Exception: pass
@@ -869,7 +931,8 @@ def upload_file():
         return jsonify({"ok": False, "error": "no file"}), 400
     original_name = _safe_filename(f.filename)
     ext = Path(original_name).suffix.lower()
-    target_dir = (Path(OUTPUT_FOLDER) / album) if album else Path(OUTPUT_FOLDER)
+    album = safe_album(album)
+    target_dir = (Path(OUTPUT_FOLDER) / album) if album and album != "all" else Path(OUTPUT_FOLDER)
     target_dir.mkdir(parents=True, exist_ok=True)
     if ext in (".heic", ".heif"):
         try:
@@ -1182,14 +1245,13 @@ def index():
 # ── Thumbnail pregenerácia ────────────────────────────────────────────────────
 
 def pregenerate_thumbs():
-    HIDDEN = {"_kos", "_thumbs"}
     folder = Path(OUTPUT_FOLDER)
     if not folder.exists():
         return
     all_photos = [
         f for f in folder.rglob("*")
         if f.is_file() and f.suffix.lower() in ALLOWED_EXT
-        and not any(p in HIDDEN for p in f.relative_to(folder).parts)
+        and not any(p in HIDDEN_DIRS for p in f.relative_to(folder).parts)
     ]
     total = len(all_photos)
     if not total:
