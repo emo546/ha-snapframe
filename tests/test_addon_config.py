@@ -55,11 +55,22 @@ class TestAddonConfig(unittest.TestCase):
         changelog = (ADDON / "CHANGELOG.md").read_text(encoding="utf-8")
         self.assertIn("## [{}]".format(version), changelog)
 
-    def test_watchdog_points_at_an_unauthenticated_endpoint(self):
-        """Watchdog nemá prihlasovacie údaje – nesmie mieriť na chránenú routu."""
-        watchdog = re.search(r'^watchdog:\s*"([^"]+)"', self.text, re.M)
-        self.assertIsNotNone(watchdog)
-        self.assertTrue(watchdog.group(1).endswith("/health"))
+    def test_healthcheck_probes_an_unauthenticated_endpoint(self):
+        """Health check nemá prihlasovacie údaje – nesmie mieriť na chránenú routu.
+
+        (Kľúč `watchdog:` v config.yaml je zastaraný, add-on linter ho odmieta –
+        sondu preto definuje HEALTHCHECK v Dockerfile.)
+        """
+        dockerfile = (ADDON / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("HEALTHCHECK", dockerfile)
+        self.assertIn("/health", dockerfile)
+        self.assertNotIn("\nwatchdog:", self.text)
+
+    def test_ingress_does_not_repeat_defaults(self):
+        """ingress_port ani webui sa pri zapnutom ingresse neuvádzajú."""
+        if re.search(r"^ingress:\s*true", self.text, re.M):
+            self.assertIsNone(re.search(r"^ingress_port:", self.text, re.M))
+            self.assertIsNone(re.search(r"^webui:", self.text, re.M))
 
 
 if __name__ == "__main__":

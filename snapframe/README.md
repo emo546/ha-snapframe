@@ -27,7 +27,7 @@ If you have a retired iPad, an old Android tablet, or any spare touchscreen gath
 - 🔐 **Optional HTTP Basic Auth** – password-protect the web interface, plus an optional `api_token` that guards only the endpoints that change something, so the frame itself still needs no login
 - 🏠 **Home Assistant ingress** – open the frame from inside Home Assistant, protected by your HA login, without exposing the port
 - 📟 **MQTT discovery** – the next waste collection, the photo count, the last scan and weather-mode state appear in Home Assistant as entities on their own
-- 🩺 **Self-healing** – a Supervisor watchdog restarts a frozen add-on, and the CIFS share is remounted automatically when the NAS comes back
+- 🩺 **Self-healing** – a container health check lets the Supervisor restart a frozen add-on, and the CIFS share is remounted automatically when the NAS comes back
 - 📡 **REST API** – `/status`, `/scan`, `/upload`, `/weather-mode/*`, `/waste/*` endpoints for Home Assistant automations
 
 > Looking for keywords: *Home Assistant photo frame*, *digital picture frame add-on*, *HEIC to JPG converter for Home Assistant*, *iPad photo frame without iCloud*, *self-hosted Aura/Skylight/Nixplay alternative*, *old tablet recycle project*, *smart mirror weather display*. If that's what brought you here — you're in the right place.
@@ -203,8 +203,8 @@ api_token: "a-long-random-string"
 
 `basic_auth_user` / `basic_auth_password` still protect *everything*, including
 viewing, and the two can be combined. `GET /health` is always open — the
-Supervisor watchdog has no credentials, and a 401 there would restart-loop the
-add-on.
+container health check has no credentials, and a 401 there would restart-loop
+the add-on.
 
 ---
 
@@ -539,7 +539,7 @@ To turn weather mode off early (e.g. from another automation, or a script tied t
 | `POST` | `/upload` | Upload a file (`multipart/form-data`: `file`, `album`) |
 | `POST` | `/scan` | Trigger immediate scan |
 | `GET` | `/status` | JSON with scan stats and thumbnail pre-generation progress |
-| `GET` | `/health` | Liveness probe for the Supervisor watchdog. The only endpoint never protected by auth |
+| `GET` | `/health` | Liveness probe for the container health check (`HEALTHCHECK` in the Dockerfile). The only endpoint never protected by auth |
 | `POST` | `/weather-mode/on` | Activate weather mode for `weather_mode_duration_minutes` |
 | `POST` | `/weather-mode/off` | Deactivate weather mode immediately |
 | `POST` | `/weather-update` | Push current weather data (JSON body, see [Weather mode](#weather-mode-motion-triggered-morning-briefing)) |

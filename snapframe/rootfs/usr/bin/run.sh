@@ -145,6 +145,8 @@ export THUMB_CACHE
 export SCAN_INTERVAL_SECONDS=$((SCAN_INTERVAL_HOURS * 3600))
 export SLIDESHOW_SECONDS
 export WEB_PORT
+# HEALTHCHECK v Dockerfile beží mimo tohto prostredia – port mu odovzdáme súborom.
+echo "${WEB_PORT}" > /tmp/snapframe.port
 export BASIC_AUTH_USER
 export BASIC_AUTH_PASSWORD
 export LANGUAGE

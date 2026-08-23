@@ -82,12 +82,9 @@ ports_description:
   8099/tcp: "SnapFrame slideshow web interface"
 # Ingress = chránené UI priamo v Home Assistante (bez otvárania portu),
 # mapovaný port zostáva pre tablety, ktoré idú na rám priamo.
+# ingress_port sa neuvádza – 8099 je jeho default a linter ho inak odmietne.
 ingress: true
-ingress_port: 8099
 panel_icon: mdi:image-multiple
-webui: "http://[HOST]:[PORT:8099]"
-# Keď server prestane odpovedať, Supervisor add-on reštartuje.
-watchdog: "http://[HOST]:[PORT:8099]/health"
 full_access: true
 apparmor: false
 privileged:
