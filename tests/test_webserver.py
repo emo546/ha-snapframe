@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -58,6 +59,54 @@ class WebTestCase(unittest.TestCase):
             photoindex._conn.close()
             photoindex._conn = None
         shutil.rmtree(self.root, ignore_errors=True)
+
+
+class TestWeatherHourLabel(unittest.TestCase):
+    """HA posiela hodinovú predpoveď v UTC – _hour_label musí prevádzať do
+    lokálnej zóny kontajnera, nielen odseknúť ciferník z UTC reťazca.
+    Predtým sa 14:00 UTC v CEST (+02:00) zobrazovalo ako '14:00', teda
+    o dve hodiny v minulosti."""
+
+    def setUp(self):
+        self._orig_tz = os.environ.get("TZ")
+        os.environ["TZ"] = "Europe/Bratislava"
+        time.tzset()
+
+    def tearDown(self):
+        if self._orig_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = self._orig_tz
+        time.tzset()
+
+    def test_utc_offset_is_applied_in_summer(self):
+        # CEST je UTC+2 – 14:00 UTC musí byť 16:00 lokálne, nie 14:00.
+        self.assertEqual(webserver._hour_label("2026-08-23T14:00:00+00:00"), "16:00")
+
+    def test_z_suffix_is_treated_as_utc(self):
+        self.assertEqual(webserver._hour_label("2026-08-23T14:00:00Z"), "16:00")
+
+    def test_already_local_offset_is_respected(self):
+        self.assertEqual(webserver._hour_label("2026-08-23T16:00:00+02:00"), "16:00")
+
+    def test_naive_datetime_is_left_unconverted(self):
+        # Bez zóny niet čo prevádzať – ostáva ako fallback.
+        self.assertEqual(webserver._hour_label("2026-08-23T14:00:00"), "14:00")
+
+    def test_garbage_input_never_raises(self):
+        self.assertEqual(webserver._hour_label(""), "")
+        self.assertEqual(webserver._hour_label(None), "")
+        self.assertEqual(webserver._hour_label("not-a-date"), "")
+
+    def test_hourly_payload_carries_the_raw_iso_time_too(self):
+        """Prehliadač na tablete má spoľahlivejšiu lokálnu zónu než kontajner
+        (rovnaký princíp ako pri kalendári odpadu) – iso musí prejsť ďalej
+        nezmenené, aby si čas vedel prepočítať sám."""
+        out = webserver._parse_hourly([
+            {"datetime": "2026-08-23T14:00:00+00:00", "temperature": 21.4, "condition": "sunny"},
+        ])
+        self.assertEqual(out[0]["iso"], "2026-08-23T14:00:00+00:00")
+        self.assertEqual(out[0]["time"], "16:00")
 
 
 class TestPathTraversal(WebTestCase):

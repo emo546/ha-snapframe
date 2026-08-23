@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.1] – 2026
+
+### Fixed
+
+- **The hourly weather strip showed the wrong time.** Home Assistant sends the hourly forecast in UTC, but the label was only ever built from that UTC string without converting to local time — the data itself was correct, only mislabelled, by exactly the UTC offset (2 hours in summer, 1 in winter). The server now converts using the container's own timezone when it has one (`TZ`, which the Supervisor normally sets), and the hourly payload also carries the raw ISO timestamp so the browser — which, like the tablet driving the waste-collection reminders, has a timezone the container can't be sure of — computes the label itself.
+
 ## [3.0.0] – 2026
 
 ### Security
