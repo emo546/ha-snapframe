@@ -19,6 +19,7 @@ os.environ.setdefault("SNAPFRAME_ASSET_DIR", str(
     Path(__file__).resolve().parents[1] / "snapframe" / "rootfs" / "usr" / "share" / "snapframe"))
 
 from PIL import Image          # noqa: E402
+import photoindex              # noqa: E402
 import webserver               # noqa: E402
 
 
@@ -34,7 +35,13 @@ class WebTestCase(unittest.TestCase):
 
         self._orig = (webserver.OUTPUT_FOLDER, webserver.BASIC_AUTH_USER,
                       webserver.BASIC_AUTH_PASS, webserver.API_TOKEN,
-                      webserver.GEOCACHE_FILE)
+                      webserver.GEOCACHE_FILE, webserver.THUMB_DIR,
+                      webserver.THUMB_CACHE)
+        webserver.THUMB_DIR       = str(self.root / "thumbs")
+        webserver.THUMB_CACHE     = "addon"
+        photoindex._conn  = None
+        photoindex.DB_FILE = str(self.root / "index.db")
+        photoindex.init()
         webserver.OUTPUT_FOLDER   = str(self.lib)
         webserver.BASIC_AUTH_USER = ""
         webserver.BASIC_AUTH_PASS = ""
@@ -45,7 +52,11 @@ class WebTestCase(unittest.TestCase):
 
     def tearDown(self):
         (webserver.OUTPUT_FOLDER, webserver.BASIC_AUTH_USER, webserver.BASIC_AUTH_PASS,
-         webserver.API_TOKEN, webserver.GEOCACHE_FILE) = self._orig
+         webserver.API_TOKEN, webserver.GEOCACHE_FILE, webserver.THUMB_DIR,
+         webserver.THUMB_CACHE) = self._orig
+        if photoindex._conn is not None:
+            photoindex._conn.close()
+            photoindex._conn = None
         shutil.rmtree(self.root, ignore_errors=True)
 
 
@@ -126,6 +137,69 @@ class TestNormalPaths(WebTestCase):
         names = [a["name"] for a in self.client.get("/albums").get_json()["albums"]]
         self.assertNotIn("_kos", names)
         self.assertIn("Rodina", names)
+
+
+class TestThumbnails(WebTestCase):
+    def test_thumbs_live_outside_the_photo_library(self):
+        self.assertEqual(self.client.get("/thumb/a.jpg").status_code, 200)
+        self.assertFalse((self.lib / "_thumbs").exists(),
+                         "thumbnail sa zapísal do knižnice fotiek")
+        self.assertTrue(list((self.root / "thumbs").rglob("*.jpg")))
+
+    def test_thumb_size_is_quantised(self):
+        for requested, expected in ((300, 512), (1024, 1024), (1500, 1600),
+                                    (5000, 2048), ("nezmysel", 1024)):
+            with self.subTest(requested=requested):
+                self.assertEqual(webserver._closest_size(requested), expected)
+
+    def test_requested_width_produces_its_own_variant(self):
+        self.assertEqual(self.client.get("/thumb/a.jpg?w=1600").status_code, 200)
+        self.assertTrue((self.root / "thumbs" / "1600").exists())
+
+    def test_png_thumb_is_served_as_jpeg(self):
+        Image.new("RGB", (40, 30), (5, 5, 5)).save(self.lib / "c.png")
+        r = self.client.get("/thumb/c.png")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers["Content-Type"].split(";")[0], "image/jpeg")
+
+    def test_delete_removes_the_thumbnail(self):
+        self.client.get("/thumb/a.jpg")
+        self.assertTrue(list((self.root / "thumbs").rglob("a.jpg*")))
+        self.client.post("/delete/a.jpg")
+        self.assertFalse(list((self.root / "thumbs").rglob("a.jpg*")))
+
+
+class TestPhotoIndex(WebTestCase):
+    def test_listing_does_not_reopen_indexed_photos(self):
+        """Druhý výpis už nesmie siahať na súbory – to je celý zmysel indexu."""
+        webserver.pregenerate_thumbs()
+        opened = []
+        real_open = webserver.Image.open
+
+        def counting_open(path, *a, **kw):
+            opened.append(str(path))
+            return real_open(path, *a, **kw)
+
+        webserver.Image.open = counting_open
+        try:
+            webserver._exif_cache._cache.clear()
+            self.client.get("/photos")
+        finally:
+            webserver.Image.open = real_open
+        self.assertEqual(opened, [])
+
+    def test_changed_photo_is_reindexed(self):
+        self.client.get("/photos")
+        row = photoindex.get("a.jpg", (self.lib / "a.jpg").stat().st_mtime)
+        self.assertIsNotNone(row)
+        os.utime(self.lib / "a.jpg", (1, 1))
+        self.assertIsNone(photoindex.get("a.jpg", 1))
+
+    def test_deleted_photo_is_pruned(self):
+        webserver.pregenerate_thumbs()
+        self.assertIn("a.jpg", photoindex.all_dates())
+        self.client.post("/delete/a.jpg")
+        self.assertNotIn("a.jpg", photoindex.all_dates())
 
 
 class TestAuth(WebTestCase):

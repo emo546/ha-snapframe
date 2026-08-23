@@ -21,6 +21,7 @@ options:
   jpg_quality: 92
   thumb_quality: 82
   thumb_max_px: 1024
+  thumb_cache: "addon"
   scan_interval_hours: 12
   slideshow_seconds: 30
   web_port: 8099
@@ -44,6 +45,7 @@ schema:
   jpg_quality: int(1,100)
   thumb_quality: int(1,100)
   thumb_max_px: int(256,3840)
+  thumb_cache: "list(addon|share)"
   scan_interval_hours: int(1,168)
   slideshow_seconds: int(3,300)
   web_port: port

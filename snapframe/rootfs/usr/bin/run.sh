@@ -10,6 +10,7 @@ DELETE_ORIGINAL=$(bashio::config 'delete_original')
 JPG_QUALITY=$(bashio::config 'jpg_quality')
 THUMB_QUALITY=$(bashio::config 'thumb_quality')
 THUMB_MAX_PX=$(bashio::config 'thumb_max_px')
+THUMB_CACHE=$(bashio::config 'thumb_cache')
 SCAN_INTERVAL_HOURS=$(bashio::config 'scan_interval_hours')
 SLIDESHOW_SECONDS=$(bashio::config 'slideshow_seconds')
 WEB_PORT=$(bashio::config 'web_port')
@@ -26,6 +27,7 @@ API_TOKEN=$(bashio::config 'api_token')
 # bashio vracia "null" pre nové polia ktoré ešte nie sú v options – nahraď defaultmi
 [ "${THUMB_QUALITY}" = "null" ]      && THUMB_QUALITY="82"
 [ "${THUMB_MAX_PX}" = "null" ]       && THUMB_MAX_PX="1024"
+[ "${THUMB_CACHE}" = "null" ]       && THUMB_CACHE="addon"
 [ "${BASIC_AUTH_USER}" = "null" ]    && BASIC_AUTH_USER=""
 [ "${BASIC_AUTH_PASSWORD}" = "null" ] && BASIC_AUTH_PASSWORD=""
 [ "${LANGUAGE}" = "null" ]            && LANGUAGE="sk"
@@ -42,7 +44,7 @@ bashio::log.info "Watch folder: ${WATCH_FOLDER}"
 bashio::log.info "Output folder: ${OUTPUT_FOLDER}"
 bashio::log.info "Delete original: ${DELETE_ORIGINAL}"
 bashio::log.info "Scan interval (hours): ${SCAN_INTERVAL_HOURS}"
-bashio::log.info "Thumbnail: max ${THUMB_MAX_PX}px, kvalita ${THUMB_QUALITY}"
+bashio::log.info "Thumbnail: max ${THUMB_MAX_PX}px, kvalita ${THUMB_QUALITY}, cache: ${THUMB_CACHE}"
 
 if [ -z "${SMB_USERNAME}" ] || [ -z "${SMB_PASSWORD}" ]; then
     bashio::log.error "smb_username alebo smb_password nie je nastavené v konfigurácii. Add-on sa zastavuje."
@@ -83,6 +85,7 @@ export DELETE_ORIGINAL
 export JPG_QUALITY
 export THUMB_QUALITY
 export THUMB_MAX_PX
+export THUMB_CACHE
 export SCAN_INTERVAL_SECONDS=$((SCAN_INTERVAL_HOURS * 3600))
 export SLIDESHOW_SECONDS
 export WEB_PORT

@@ -64,6 +64,15 @@ ALLOWED_EXT   = (".jpg", ".jpeg", ".png")
 HIDDEN_DIRS   = {"_kos", "_thumbs"}
 PHOTO_MAX_AGE = 24 * 3600      # fotky/thumbnaily sa nemenia pod tým istým menom
 
+# Thumbnaily patria k add-onu, nie do knižnice používateľa: na SMB share sa
+# čítajú aj zapisujú cez sieť a špinia priečinok s fotkami. Kto má knižnicu
+# väčšiu než voľné miesto na HA (SD karta), prepne thumb_cache na "share".
+THUMB_CACHE  = _env_str("THUMB_CACHE", "addon")        # addon | share
+THUMB_DIR    = _env_str("THUMB_DIR", "/data/thumbs")
+# Ponuka veľkostí: rám si vypýta tú, ktorá sedí jeho displeju (Retina iPad
+# potrebuje viac než 1024 px, inak je fotka na celú obrazovku mäkká).
+THUMB_SIZES  = (512, 1024, 1600, 2048)
+
 # HTML/CSS/JS rámu sú súbory, nie reťazce v tomto module – dajú sa lintovať
 # a prehliadač na tablete si CSS/JS nakešuje (viď ASSET_VERSION nižšie).
 ASSET_DIR = Path(os.environ.get("SNAPFRAME_ASSET_DIR", "/usr/share/snapframe"))
@@ -104,6 +113,12 @@ try:
     _has_state = True
 except ImportError:
     _has_state = False
+
+try:
+    import photoindex as _index
+    _has_index = True
+except ImportError:               # pragma: no cover
+    _has_index = False
 
 try:
     import waste_import as _waste_import
@@ -680,6 +695,34 @@ def get_exif_date(path: Path):
 def get_gps_coords(path: Path):
     return _load_exif(path).get("gps")
 
+def _photo_meta(path: Path):
+    """EXIF fotky cez index v /data – bez neho by sa každá fotka musela pri
+    každom výpise otvoriť cez sieť. Vracia (dátum, gps, uložená lokalita)."""
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return (None, None, None)
+    rel = None
+    if _has_index:
+        try:
+            rel = str(path.resolve().relative_to(Path(OUTPUT_FOLDER).resolve()))
+        except ValueError:
+            rel = None
+    if rel is not None:
+        row = _index.get(rel, mtime)
+        if row is not None:
+            dt  = datetime.fromtimestamp(row["date_ts"]) if row["date_ts"] else None
+            gps = (row["lat"], row["lon"]) if row["lat"] is not None else None
+            return (dt, gps, row["location"])
+    exif = _load_exif(path)
+    dt, gps = exif.get("date"), exif.get("gps")
+    if rel is not None:
+        _index.put(rel, mtime,
+                   dt.timestamp() if dt else None,
+                   gps[0] if gps else None,
+                   gps[1] if gps else None)
+    return (dt, gps, None)
+
 def reverse_geocode(lat, lon, lang):
     key = (round(lat, 2), round(lon, 2), lang)
     if key in _geocode_cache:
@@ -738,21 +781,54 @@ def list_photos(album=""):
         files  = [f for f in folder.rglob("*")
                   if f.is_file() and f.suffix.lower() in ALLOWED_EXT
                   and not any(p in HIDDEN_DIRS for p in f.relative_to(folder).parts)]
+    # Jeden dotaz do indexu namiesto otvárania každej fotky cez sieť.
+    known = _index.all_dates() if _has_index else {}
+    base  = Path(OUTPUT_FOLDER).resolve()
+
     def sort_key(f):
-        d = get_exif_date(f)
-        return d.timestamp() if d is not None else f.stat().st_mtime
+        try:
+            mtime = f.stat().st_mtime
+        except OSError:
+            return 0.0
+        row = known.get(str(f.resolve().relative_to(base))) if known else None
+        if row is not None and abs(row[0] - mtime) <= 0.001:
+            return row[1] if row[1] else mtime
+        d = _photo_meta(f)[0]        # doplní index pre novú/zmenenú fotku
+        return d.timestamp() if d is not None else mtime
+
     files.sort(key=sort_key)
     return [str(f.relative_to(folder)) for f in files]
 
 # ── Thumbnail helper ──────────────────────────────────────────────────────────
 
-def _get_or_create_thumb(filename: str):
+def _thumb_root() -> Path:
+    if THUMB_CACHE == "share":
+        return Path(OUTPUT_FOLDER) / "_thumbs"
+    return Path(THUMB_DIR)
+
+
+def _closest_size(requested) -> int:
+    """Zaokrúhli požadovanú šírku na najbližšiu väčšiu z ponuky – aby sa
+    z ľubovoľného rozlíšenia displeja nestal neobmedzený počet variantov."""
+    try:
+        want = int(requested)
+    except (TypeError, ValueError):
+        return THUMB_MAX_PX
+    for size in THUMB_SIZES:
+        if size >= want:
+            return size
+    return THUMB_SIZES[-1]
+
+
+def _get_or_create_thumb(filename: str, size=None):
+    """(priečinok, meno) thumbnailu, alebo None. Thumbnaily sú vždy JPEG –
+    aj pre .png zdroj, nech sedí Content-Type."""
     src = safe_photo_path(filename)
     if src is None or not src.is_file():
         return None
-    thumb_path = safe_photo_path(str(Path("_thumbs") / filename))
-    if thumb_path is None:
-        return None
+    size = size or THUMB_MAX_PX
+    rel  = src.relative_to(Path(OUTPUT_FOLDER).resolve())
+    thumb_path = _thumb_root() / str(size) / (str(rel) + ".jpg")
     try:
         if thumb_path.exists() and thumb_path.stat().st_mtime >= src.stat().st_mtime:
             return (str(thumb_path.parent), thumb_path.name)
@@ -762,16 +838,33 @@ def _get_or_create_thumb(filename: str):
         thumb_path.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(src) as raw:
             img = ImageOps.exif_transpose(raw)
-        img.thumbnail((THUMB_MAX_PX, THUMB_MAX_PX), Image.LANCZOS)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.save(thumb_path, "JPEG", quality=THUMB_QUALITY, optimize=True)
+            img.thumbnail((size, size), Image.LANCZOS)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(thumb_path, "JPEG", quality=THUMB_QUALITY, optimize=True)
     except Exception as e:
         log.warning("Thumbnail chyba {}: {}".format(filename, e))
         if src.is_file():
             return (str(src.parent), src.name)
         return None
     return (str(thumb_path.parent), thumb_path.name)
+
+
+def _forget_thumbs(rel):
+    """Zmaž thumbnaily fotky vo všetkých veľkostiach."""
+    root = _thumb_root()
+    for size in THUMB_SIZES:
+        for candidate in (root / str(size) / (str(rel) + ".jpg"), root / str(size) / str(rel)):
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
+    legacy = Path(OUTPUT_FOLDER) / "_thumbs" / rel
+    try:
+        legacy.unlink()
+    except OSError:
+        pass
+
 
 # ── Bezpečné cesty ────────────────────────────────────────────────────────────
 # Flask konvertor <path:…> prepustí do handlera aj "../.." (aj v %2e%2e forme),
@@ -863,7 +956,7 @@ def photos_route():
 
 @app.route("/thumb/<path:filename>")
 def thumb(filename):
-    result = _get_or_create_thumb(filename)
+    result = _get_or_create_thumb(filename, _closest_size(request.args.get("w")))
     if result is None:
         return ("not found", 404)
     return send_from_directory(result[0], result[1], max_age=PHOTO_MAX_AGE)
@@ -892,15 +985,22 @@ def exif_route(filename):
         return jsonify({"date": "", "location": ""}), 404
     date_str  = ""
     loc_str   = ""
-    lang      = LANGUAGE if LANGUAGE in MONTHS else "sk"
-    exif_date = get_exif_date(path)
+    lang = LANGUAGE if LANGUAGE in MONTHS else "sk"
+    exif_date, coords, cached_loc = _photo_meta(path)
     if exif_date is None and path.exists():
         exif_date = datetime.fromtimestamp(path.stat().st_mtime)
     if exif_date:
         date_str = "{} {}".format(MONTHS[lang][exif_date.month - 1], exif_date.year)
-    coords = get_gps_coords(path)
-    if coords:
+    if cached_loc is not None:
+        loc_str = cached_loc
+    elif coords:
         loc_str = reverse_geocode(coords[0], coords[1], lang)
+        if _has_index:
+            try:
+                rel = str(path.resolve().relative_to(Path(OUTPUT_FOLDER).resolve()))
+                _index.set_location(rel, loc_str)
+            except ValueError:
+                pass
     return jsonify({"date": date_str, "location": loc_str})
 
 @app.route("/delete/<path:filename>", methods=["POST"])
@@ -917,10 +1017,9 @@ def delete_photo(filename):
         dest = kos_dir / "{}_{}.{}".format(src.stem, c, src.suffix.lstrip("."))
         c += 1
     src.rename(dest)
-    thumb_p = Path(OUTPUT_FOLDER) / "_thumbs" / rel
-    if thumb_p.exists():
-        try: thumb_p.unlink()
-        except Exception: pass
+    _forget_thumbs(rel)
+    if _has_index:
+        _index.forget(str(rel))
     return jsonify({"ok": True})
 
 @app.route("/upload", methods=["POST"])
@@ -1260,28 +1359,37 @@ def pregenerate_thumbs():
     if _has_state:
         _state.thumb_start(total)
     done = 0; skipped = 0
+    thumb_dir = _thumb_root() / str(THUMB_MAX_PX)
     for src in all_photos:
-        filename  = str(src.relative_to(folder))
-        thumb_path = folder / "_thumbs" / filename
+        filename   = str(src.relative_to(folder))
+        thumb_path = thumb_dir / (filename + ".jpg")
         try:
             if thumb_path.exists() and thumb_path.stat().st_mtime >= src.stat().st_mtime:
+                _photo_meta(src)
                 skipped += 1; done += 1
                 if _has_state: _state.thumb_progress(done)
                 continue
         except OSError:
             pass
         _get_or_create_thumb(filename)
+        _photo_meta(src)              # index sa plní tu, nie pri prvom /photos
         done += 1
         if _has_state: _state.thumb_progress(done)
         if done % 50 == 0:
             log.info("Thumbnaile: {}/{} ({} preskočených)".format(done, total, skipped))
     if _has_state:
         _state.thumb_finish()
+    if _has_index:
+        removed = _index.prune({str(f.relative_to(folder)) for f in all_photos})
+        if removed:
+            log.info("Index: odstránených {} zmazaných fotiek".format(removed))
     log.info("Thumbnaile hotové: {}/{} ({} preskočených)".format(done, total, skipped))
 
 
 def run_web_server():
     _load_geocode_cache()
+    if _has_index and _index.init():
+        log.info("Index fotiek: {}".format(_index.DB_FILE))
     log.info("Spúšťam SnapFrame web server – port: {}, jazyk: {}, sleep: {} – {}".format(
         WEB_PORT, LANGUAGE, SLEEP_START or "off", SLEEP_END or "off"))
     log.info("Weather mode: interval {} fotiek, trvanie {} min po aktivácii".format(

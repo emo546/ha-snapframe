@@ -31,20 +31,31 @@ OUTPUT_FOLDER          = os.environ.get("OUTPUT_FOLDER", "/sambamount/converted"
 DELETE_ORIGINAL        = os.environ.get("DELETE_ORIGINAL", "true").lower() == "true"
 JPG_QUALITY            = int(os.environ.get("JPG_QUALITY", "92"))
 STABLE_WAIT_SECONDS    = 5
+STABLE_SKIP_AGE        = 120   # s – staršie súbory už nikto nenahráva
 SCAN_INTERVAL_SECONDS  = int(os.environ.get("SCAN_INTERVAL_SECONDS", str(12 * 60 * 60)))
 
 
 def is_file_stable(path: Path, wait_seconds: int = STABLE_WAIT_SECONDS) -> bool:
+    """Čaká sa len na súbory, ktoré sa práve teraz môžu kopírovať.
+
+    Kontrola sa robí pre každý súbor zvlášť, takže bezpodmienečné čakanie
+    znamenalo pri 500 nových fotkách vyše 40 minút skenu – aj keď tam ležia
+    od minulého týždňa.
+    """
     try:
-        size1 = path.stat().st_size
+        st = path.stat()
     except FileNotFoundError:
         return False
+    if st.st_size <= 0:
+        return False
+    if time.time() - st.st_mtime > STABLE_SKIP_AGE:
+        return True
     time.sleep(wait_seconds)
     try:
-        size2 = path.stat().st_size
+        st2 = path.stat()
     except FileNotFoundError:
         return False
-    return size1 == size2 and size1 > 0
+    return st2.st_size == st.st_size and st2.st_size > 0
 
 
 def convert_heic_to_jpg(src: Path, output_folder: Path, quality: int) -> Path:
