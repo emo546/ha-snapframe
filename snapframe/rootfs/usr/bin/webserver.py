@@ -1392,7 +1392,8 @@ def pregenerate_thumbs():
     if _has_state:
         _state.thumb_finish()
     if _has_index:
-        removed = _index.prune({str(f.relative_to(folder)) for f in all_photos})
+        base = folder.resolve()
+        removed = _index.prune({str(f.resolve().relative_to(base)) for f in all_photos})
         if removed:
             log.info("Index: odstránených {} zmazaných fotiek".format(removed))
     log.info("Thumbnaile hotové: {}/{} ({} preskočených)".format(done, total, skipped))

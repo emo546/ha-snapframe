@@ -431,6 +431,7 @@ function loadAlbumCovers() {
 function startSlideshowIdx(i) { startSlideshow(albumNames[i]); }
 
 function goBack() {
+  _showToken++;                      // zahoď rozrobené načítanie fotky
   if (advanceTimer) { clearInterval(advanceTimer); advanceTimer = null; }
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   photos = []; currentIndex = -1; activeIsA = true;

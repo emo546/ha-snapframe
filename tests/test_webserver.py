@@ -169,6 +169,39 @@ class TestThumbnails(WebTestCase):
         self.assertFalse(list((self.root / "thumbs").rglob("a.jpg*")))
 
 
+class TestExif(WebTestCase):
+    """EXIF sa číta so zatvoreným súborom – GPS blok sa načítava lenivo,
+    takže je to presne to miesto, kde sa dá refaktorom nenápadne prísť o dáta."""
+
+    def _photo_with_gps(self, name="gps.jpg"):
+        exif = Image.Exif()
+        exif[0x0132] = "2021:07:14 10:11:12"
+        exif[0x8825] = {1: "N", 2: (48.0, 8.0, 30.0), 3: "E", 4: (17.0, 6.0, 15.0)}
+        path = self.lib / name
+        Image.new("RGB", (20, 20), (3, 3, 3)).save(path, "JPEG", exif=exif)
+        return path
+
+    def test_date_and_gps_are_read(self):
+        path = self._photo_with_gps()
+        data = webserver._load_exif(path)
+        self.assertEqual(data["date"].year, 2021)
+        self.assertAlmostEqual(data["gps"][0], 48.1416666, places=4)
+        self.assertAlmostEqual(data["gps"][1], 17.1041666, places=4)
+
+    def test_exif_endpoint_reports_the_date(self):
+        self._photo_with_gps()
+        data = self.client.get("/exif/gps.jpg").get_json()
+        self.assertIn("2021", data["date"])
+
+    def test_gps_survives_a_round_trip_through_the_index(self):
+        path = self._photo_with_gps()
+        webserver._photo_meta(path)                 # naplní index
+        webserver._exif_cache._cache.clear()
+        _date, gps, _loc = webserver._photo_meta(path)
+        self.assertIsNotNone(gps)
+        self.assertAlmostEqual(gps[0], 48.1416666, places=4)
+
+
 class TestPhotoIndex(WebTestCase):
     def test_listing_does_not_reopen_indexed_photos(self):
         """Druhý výpis už nesmie siahať na súbory – to je celý zmysel indexu."""
