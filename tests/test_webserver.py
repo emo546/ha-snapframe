@@ -188,6 +188,67 @@ class TestNormalPaths(WebTestCase):
         self.assertIn("Rodina", names)
 
 
+class TestPhotoScanning(WebTestCase):
+    """list_photos/list_albums prešli z Path.iterdir()+is_file()+stat()+resolve()
+    (viacero syscallov na súbor, na CIFS teda viacero sieťových ciest tam a späť)
+    na os.scandir(), ktorého DirEntry si stat() zapamätá. Toto overuje, že
+    výstup zostal rovnaký a že skryté priečinky sa naozaj vôbec neprechádzajú –
+    nielen že sa z výsledku vyfiltrujú až po tom, čo sa celé prejdú."""
+
+    def test_hidden_dirs_are_never_descended_into(self):
+        deep = self.lib / "_kos" / "vela" / "hlboko"
+        deep.mkdir(parents=True)
+        Image.new("RGB", (10, 10)).save(deep / "zmazana.jpg")
+
+        real_scandir = webserver.os.scandir
+        visited = []
+
+        def spy(path="."):
+            visited.append(str(path))
+            return real_scandir(path)
+
+        webserver.os.scandir = spy
+        try:
+            photos = webserver.list_photos("all")
+        finally:
+            webserver.os.scandir = real_scandir
+
+        self.assertFalse(any("_kos" in p for p in photos))
+        self.assertFalse(any(v.endswith("_kos") for v in visited),
+                          "_kos sa nemal vôbec prejsť, len preskočiť")
+
+    def test_album_listing_is_not_recursive(self):
+        nested = self.lib / "Rodina" / "podpriecinok"
+        nested.mkdir()
+        Image.new("RGB", (10, 10)).save(nested / "vnutorna.jpg")
+        photos = self.client.get("/photos?album=Rodina").get_json()["photos"]
+        self.assertEqual(photos, ["Rodina/b.jpg"])
+
+    def test_all_photos_view_still_recurses(self):
+        nested = self.lib / "Rodina" / "podpriecinok"
+        nested.mkdir()
+        Image.new("RGB", (10, 10)).save(nested / "vnutorna.jpg")
+        photos = self.client.get("/photos").get_json()["photos"]
+        self.assertIn("Rodina/podpriecinok/vnutorna.jpg", photos)
+
+    def test_album_photo_count_ignores_trash(self):
+        (self.lib / "_kos").mkdir(exist_ok=True)
+        for i in range(5):
+            Image.new("RGB", (10, 10)).save(self.lib / "_kos" / "x{}.jpg".format(i))
+        albums = self.client.get("/albums").get_json()["albums"]
+        by_name = {a["name"]: a["count"] for a in albums}
+        self.assertNotIn("_kos", by_name)
+        self.assertEqual(by_name.get("Rodina"), 1)
+
+    def test_large_album_lists_every_photo(self):
+        big = self.lib / "Velky"
+        big.mkdir()
+        for i in range(150):
+            Image.new("RGB", (10, 10), (i % 255, 0, 0)).save(big / "f{:03d}.jpg".format(i))
+        photos = self.client.get("/photos?album=Velky").get_json()["photos"]
+        self.assertEqual(len(photos), 150)
+
+
 class TestThumbnails(WebTestCase):
     def test_thumbs_live_outside_the_photo_library(self):
         self.assertEqual(self.client.get("/thumb/a.jpg").status_code, 200)
