@@ -68,7 +68,7 @@ jobs:
 
       - name: Set up QEMU
         if: steps.check.outputs.exists == 'false' && matrix.arch != 'amd64'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Buildx
         if: steps.check.outputs.exists == 'false'
