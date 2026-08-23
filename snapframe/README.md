@@ -24,7 +24,10 @@ If you have a retired iPad, an old Android tablet, or any spare touchscreen gath
 - 🔄 **Background thumbnail pre-generation** – thumbnails are generated in the background after each scan; no waiting on first open, fast even with thousands of photos
 - 🗑️ **Trash** – long-press any photo to move it to `_kos/` subfolder (recoverable via SMB)
 - 👆 **Swipe gestures** – left/right to navigate, swipe down to return to album selection
-- 🔐 **Optional HTTP Basic Auth** – password-protect the web interface
+- 🔐 **Optional HTTP Basic Auth** – password-protect the web interface, plus an optional `api_token` that guards only the endpoints that change something, so the frame itself still needs no login
+- 🏠 **Home Assistant ingress** – open the frame from inside Home Assistant, protected by your HA login, without exposing the port
+- 📟 **MQTT discovery** – the next waste collection, the photo count, the last scan and weather-mode state appear in Home Assistant as entities on their own
+- 🩺 **Self-healing** – a Supervisor watchdog restarts a frozen add-on, and the CIFS share is remounted automatically when the NAS comes back
 - 📡 **REST API** – `/status`, `/scan`, `/upload`, `/weather-mode/*`, `/waste/*` endpoints for Home Assistant automations
 
 > Looking for keywords: *Home Assistant photo frame*, *digital picture frame add-on*, *HEIC to JPG converter for Home Assistant*, *iPad photo frame without iCloud*, *self-hosted Aura/Skylight/Nixplay alternative*, *old tablet recycle project*, *smart mirror weather display*. If that's what brought you here — you're in the right place.
@@ -112,6 +115,7 @@ You can also embed it as an `iframe` panel in your Lovelace dashboard if you'd r
 |---|---|---|
 | `smb_server` | `192.168.1.100` | IP address or hostname of your SMB/CIFS server |
 | `smb_share` | `Photos` | SMB share name |
+| `smb_version` | `3.0` | SMB protocol version: `3.1.1`, `3.0`, `2.1` or `1.0`. Older NAS boxes and Windows shares often need `2.1` |
 | `smb_username` | *(required)* | SMB username |
 | `smb_password` | *(required)* | SMB password |
 | `watch_folder` | `/sambamount/upload` | Path inside the mounted share to watch for new HEIC files |
@@ -119,7 +123,8 @@ You can also embed it as an `iframe` panel in your Lovelace dashboard if you'd r
 | `delete_original` | `true` | Delete original HEIC after successful conversion |
 | `jpg_quality` | `92` | JPEG quality for converted full-size photos (1–100) |
 | `thumb_quality` | `82` | JPEG quality for cached thumbnails (1–100) |
-| `thumb_max_px` | `1024` | Longest edge in pixels for thumbnails (256–3840) |
+| `thumb_max_px` | `1024` | Longest edge in pixels for thumbnails (256–3840). High-DPI screens additionally request 1600 or 2048 px variants |
+| `thumb_cache` | `addon` | Where thumbnails live: `addon` = on the Home Assistant disk (faster, keeps your photo folder clean), `share` = in `output_folder/_thumbs/` as before |
 | `scan_interval_hours` | `12` | How often to scan the watch folder (1–168 h) |
 | `slideshow_seconds` | `30` | Seconds each photo is shown (3–300) |
 | `web_port` | `8099` | Port for the web interface |
@@ -131,6 +136,12 @@ You can also embed it as an `iframe` panel in your Lovelace dashboard if you'd r
 | `weather_photo_interval` | `8` | How many photos to show between weather screens while weather mode is active (2–50) |
 | `weather_mode_duration_minutes` | `120` | How long weather mode stays active after being triggered via `/weather-mode/on` (5–720) |
 | `anthropic_api_key` | `""` | **Optional.** Enables reading a collection schedule from a photo/scan when the local PDF parser can't handle it. Leave empty to keep everything on your own network — see [Importing the municipal schedule](#importing-the-municipal-schedule) |
+| `api_token` | `""` | **Optional but recommended.** When set, every endpoint that changes something (upload, delete, scan, waste config/import, weather push) requires the token — see [Protecting the write endpoints](#protecting-the-write-endpoints) |
+| `mqtt_enabled` | `true` | Publish SnapFrame state to Home Assistant via MQTT discovery |
+| `mqtt_host` | `""` | Leave empty to use the Mosquitto add-on configured in Home Assistant |
+| `mqtt_port` | `1883` | Only needed when you set the broker by hand |
+| `mqtt_username` | `""` | Only needed when you set the broker by hand |
+| `mqtt_password` | `""` | Only needed when you set the broker by hand |
 
 ### Example configuration
 
@@ -159,6 +170,70 @@ anthropic_api_key: ""
 ```
 
 Most of the above (except SMB credentials) can also be changed later — night-mode theme (black vs. starry sky) is even adjustable directly from the slideshow via the ⚙ settings icon, without touching the add-on config at all.
+
+---
+
+## Protecting the write endpoints
+
+Reading is open on purpose: the tablet on the wall should show photos without
+anyone logging in. Everything that *changes* something is a different matter —
+uploading, deleting a photo, triggering a scan, saving or importing the waste
+calendar, pushing weather data. Without a token those calls are available to
+anything that can reach the port.
+
+Set `api_token` to any long random string and they start requiring it:
+
+```yaml
+api_token: "a-long-random-string"
+```
+
+- **In the app** – the first time you upload, delete or save the calendar,
+  SnapFrame asks for the token and remembers it in that browser. Nothing else
+  changes.
+- **From Home Assistant** – add the header to your `rest_command` definitions:
+
+  ```yaml
+  rest_command:
+    snapframe_weather_mode_on:
+      url: "http://homeassistant.local:8099/weather-mode/on"
+      method: POST
+      headers:
+        X-SnapFrame-Token: "a-long-random-string"
+  ```
+
+`basic_auth_user` / `basic_auth_password` still protect *everything*, including
+viewing, and the two can be combined. `GET /health` is always open — the
+Supervisor watchdog has no credentials, and a 401 there would restart-loop the
+add-on.
+
+---
+
+## Home Assistant integration
+
+### Ingress (no port needed)
+
+The add-on offers ingress, so **Open Web UI** in the add-on page (and the
+sidebar panel) shows the frame inside Home Assistant, protected by your normal
+HA login. The mapped port stays available at the same time — that is the one
+the tablets use, since they can't log in to HA.
+
+### MQTT entities
+
+With the Mosquitto add-on running and `mqtt_enabled` left on, SnapFrame
+publishes its state via MQTT discovery and the entities appear on their own —
+no REST sensor to write by hand:
+
+| Entity | State | Attributes |
+| ------ | ----- | ---------- |
+| `sensor.snapframe_next_waste_collection` | Date of the next collection (`YYYY-MM-DD`) | `days_until`, `types`, `text` |
+| `sensor.snapframe_photos` | Number of photos in the library | – |
+| `sensor.snapframe_last_scan` | Timestamp of the last scan | `converted_total` |
+| `binary_sensor.snapframe_weather_mode` | Whether weather mode is active | – |
+
+State is republished every five minutes and immediately after each scan. To
+use a broker outside Home Assistant, fill in `mqtt_host` and friends; to turn
+the whole thing off, set `mqtt_enabled: false`. The REST endpoints described
+below keep working either way.
 
 ---
 
@@ -456,7 +531,7 @@ To turn weather mode off early (e.g. from another automation, or a script tied t
 | `GET` | `/` | Slideshow web interface |
 | `GET` | `/albums` | JSON list of albums with photo counts |
 | `GET` | `/photos?album=X&order=date\|random` | JSON list of photo paths |
-| `GET` | `/thumb/<path>` | Cached thumbnail (JPEG, max `thumb_max_px` px) |
+| `GET` | `/thumb/<path>?w=<px>` | Cached thumbnail (always JPEG). `w` picks the nearest available width (512, 1024, 1600, 2048); without it, `thumb_max_px` is used |
 | `GET` | `/photo/<path>` | Full-size photo |
 | `GET` | `/exif/<path>` | JSON with `date` and `location` strings |
 | `GET` | `/album-cover/<album>` | Thumbnail of the first photo in album |
@@ -464,6 +539,7 @@ To turn weather mode off early (e.g. from another automation, or a script tied t
 | `POST` | `/upload` | Upload a file (`multipart/form-data`: `file`, `album`) |
 | `POST` | `/scan` | Trigger immediate scan |
 | `GET` | `/status` | JSON with scan stats and thumbnail pre-generation progress |
+| `GET` | `/health` | Liveness probe for the Supervisor watchdog. The only endpoint never protected by auth |
 | `POST` | `/weather-mode/on` | Activate weather mode for `weather_mode_duration_minutes` |
 | `POST` | `/weather-mode/off` | Deactivate weather mode immediately |
 | `POST` | `/weather-update` | Push current weather data (JSON body, see [Weather mode](#weather-mode-motion-triggered-morning-briefing)) |
@@ -473,6 +549,9 @@ To turn weather mode off early (e.g. from another automation, or a script tied t
 | `GET` | `/waste/status` | Display settings + expanded collection days for the next ~3 weeks |
 | `GET` | `/waste/next` | Next collection — shaped for a Home Assistant REST sensor |
 | `POST` | `/waste/import` | Extract collection series from an uploaded schedule (`multipart/form-data`: `file`); returns a proposal, saves nothing |
+
+Every `POST` above requires the `X-SnapFrame-Token` header when `api_token` is
+set. `GET` requests never do.
 
 ### `/status` response example
 
@@ -540,21 +619,45 @@ iPhone / tablet Photos app
      (motion sensor, weather entity)
 ```
 
-- **`watcher.py`** – main process; mounts SMB share, runs scan loop, spawns webserver thread
-- **`webserver.py`** – Flask app served by Waitress (8 threads); handles all HTTP routes and renders the slideshow UI
+- **`run.sh`** – mounts the CIFS share and keeps a watchdog on it: every minute it checks that the mount is both present and readable (a NAS that disappears leaves the mount entry behind) and remounts when needed
+- **`watcher.py`** – main process; runs the scan loop, spawns the webserver and MQTT threads
+- **`webserver.py`** – Flask app served by Waitress (8 threads); handles all HTTP routes and serves the page from `/usr/share/snapframe`
+- **`photoindex.py`** – SQLite index of photo dates and GPS in `/data`, so listing the library doesn't reopen every file over the network
+- **`mqtt_publish.py`** – optional MQTT discovery publisher
 - **`state.py`** – shared in-process state (scan timestamps, thumbnail progress, manual scan flag, weather-mode status and cached weather data)
 
 ### Thumbnail caching
 
-Thumbnails are stored in `output_folder/_thumbs/` on the SMB share. They are generated:
+Thumbnails live in `/data/thumbs/<width>/` on the Home Assistant disk (set
+`thumb_cache: share` to keep them in `output_folder/_thumbs/` instead, at the
+cost of reading and writing them over the network). They are generated:
+
 1. **On first request** (on-demand) if not yet cached
 2. **In bulk** after every scan in a background thread – this pre-warms the cache so the slideshow is fast even for large collections (3000+ photos)
 
 On the first ever run with an existing photo collection, pre-generation runs in the background. The slideshow is accessible immediately; photos without a cached thumbnail temporarily serve the full-size image as fallback.
 
+The frame asks for the width it actually renders at, so a Retina panel gets a
+2048 px image instead of upscaling a 1024 px one. Only the widths in the fixed
+list (512, 1024, 1600, 2048) are ever generated, so the cache can't grow one
+variant per device.
+
+After upgrading from 2.x the old `output_folder/_thumbs/` folder is no longer
+used and can be deleted by hand; the new cache rebuilds itself in the
+background.
+
+### Photo index
+
+Sorting the slideshow by date means knowing every photo's EXIF date. Reading
+that from the files themselves meant opening all of them over CIFS on every
+listing, so dates and GPS coordinates are kept in a SQLite index in
+`/data/photo_index.db`, keyed by path and modification time. The background
+pass after each scan fills it, a changed photo is re-read, a deleted one is
+dropped. Delete the file and it rebuilds itself.
+
 ### EXIF and GPS
 
-EXIF metadata is read from the JPG files. GPS coordinates are reverse-geocoded via [Nominatim / OpenStreetMap](https://nominatim.openstreetmap.org/) with a polite 1-request-per-location rate (results are cached persistently in `/data/geocode_cache.json`).
+EXIF metadata is read from the JPG files once and then served from the photo index. GPS coordinates are reverse-geocoded via [Nominatim / OpenStreetMap](https://nominatim.openstreetmap.org/) with a polite 1-request-per-location rate (results are cached persistently in `/data/geocode_cache.json` and in the index).
 
 ---
 
@@ -608,17 +711,27 @@ EXIF metadata is read from the JPG files. GPS coordinates are reverse-geocoded v
 
 - The addon requires `full_access: true` and `SYS_ADMIN` privilege to mount CIFS shares inside the container. This is standard for any addon that needs to call `mount`. It **cannot** be installed from the official HA addon store for this reason.
 - SMB credentials are stored in HA's encrypted addon configuration and are never logged.
-- The web interface has **no authentication by default** – it is intended for use on a trusted local network. Enable `basic_auth_user` / `basic_auth_password` if you expose it externally.
-- The `/weather-mode/*` and `/weather-update` endpoints have no authentication beyond whatever `basic_auth_user`/`basic_auth_password` you've set — if you enable Basic Auth, remember to add the credentials to your `rest_command` definitions too (`headers: {Authorization: "Basic ..."}`).
+- The web interface has **no authentication by default** – it is intended for use on a trusted local network. Enable `basic_auth_user` / `basic_auth_password` if you expose it externally, and prefer ingress for the UI you open from Home Assistant.
+- **Set `api_token`.** Without it, anything that can reach the port can upload, delete photos and rewrite the waste calendar — see [Protecting the write endpoints](#protecting-the-write-endpoints). Reading deliberately stays open so the frame needs no login.
+- The `/weather-mode/*` and `/weather-update` endpoints are covered by `api_token` as well; if you enable Basic Auth, remember to add those credentials to your `rest_command` definitions too (`headers: {Authorization: "Basic ..."}`).
+- Paths that arrive in a URL are resolved and rejected if they leave the photo library, so `/delete/../..` and friends cannot touch anything outside `output_folder` (see the 3.0.0 entry in the changelog).
+- SMB credentials are written to a temporary credentials file only for the duration of a mount attempt and shredded immediately afterwards, including on every automatic remount.
 - SnapFrame never calls out to the Home Assistant API and needs no `homeassistant_api`/`hassio_api` permission or long-lived token — all HA integration is one-directional (HA → SnapFrame) via plain REST calls you configure yourself.
 - **Only one feature can send data off your network, and it is off by default.** With `anthropic_api_key` set, the schedule import falls back to sending the *uploaded schedule file* to Anthropic's API when the local PDF parser can't read it — see [Importing the municipal schedule](#importing-the-municipal-schedule). Nothing else in SnapFrame makes outbound calls except the optional Nominatim reverse-geocoding lookup for the photo location overlay. Your photos are never sent anywhere. Leave `anthropic_api_key` empty and SnapFrame stays entirely on your LAN; the PDF parser itself needs no key and no internet.
 - SnapFrame itself never stores an uploaded schedule: it is read, parsed, and dropped, and only the dates you confirm are saved (into `/data/waste_schedule.json`). Note that uploads larger than ~500 KB are buffered by the web server into a temporary file inside the container while the request is being handled; that file is removed as soon as the request finishes and never leaves the container.
-- `POST /waste/import` and `POST /waste/config` are protected only by whatever `basic_auth_user`/`basic_auth_password` you've set, like every other endpoint. Uploads are capped at 12 MB and the saved schedule is validated and clamped server-side (rule count, date count, value ranges), so a malformed or hostile request can't grow the stored config without bound.
+- `POST /waste/import` and `POST /waste/config` are protected by `api_token` (and by Basic Auth if you enabled it). Uploads are capped at 12 MB and the saved schedule is validated and clamped server-side (rule count, date count, value ranges), so a malformed or hostile request can't grow the stored config without bound.
 - The geocoding cache (`/data/geocode_cache.json`) stores GPS coordinates rounded to 2 decimal places (~1 km precision). It does not contain any other personal data.
 
 ---
 
 ## Contributing
+
+Development checks mirror CI: `python -m unittest discover -s tests`,
+`ruff check --config ruff.toml snapframe/rootfs/usr/bin tests`, and
+`node --check snapframe/rootfs/usr/share/snapframe/static/app.js`.
+The page lives in `snapframe/rootfs/usr/share/snapframe/` (`index.html`,
+`static/app.css`, `static/app.js`) — only the language pack and a few config
+values are injected by the server, everything else is a plain static file.
 
 Pull requests are welcome. Some ideas:
 - Additional UI languages (i18n)

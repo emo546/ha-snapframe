@@ -44,7 +44,9 @@ You can display your family photos, organize them into albums, show photo inform
 | 🌤️ **Weather mode**              | Show weather information when triggered               |
 | 🗑️ **Waste collection reminders** | Know the day before which bin to put out               |
 | 📄 **Schedule import**            | Upload the municipal leaflet, dates are read out of it |
-| 🏠 **Home Assistant integration** | Control SnapFrame using Home Assistant                |
+| 🏠 **Home Assistant integration** | Control SnapFrame using Home Assistant                 |
+| 📟 **Ready-made HA entities**     | Next bin day, photo count and scan state via MQTT      |
+| 🔐 **Optional access token**      | Viewing stays open, changes need a token               |
 | 🌍 **Multi-language UI**          | Use SnapFrame in different languages                  |
 | 📱 **Old hardware friendly**      | Give an old tablet a new purpose                      |
 
@@ -127,6 +129,12 @@ Click **Install**.
 
 Open the SnapFrame add-on and configure your photo share and other options.
 
+Two worth setting straight away: **`api_token`**, so that only you can upload or
+delete photos, and **`language`**. Everything else has a sensible default.
+
+Once it is running, **Open Web UI** shows the frame inside Home Assistant; the
+tablets go straight to `http://<home-assistant>:8099`.
+
 For the complete configuration reference, see:
 
 👉 [SnapFrame Add-on Documentation](snapframe/README.md)
@@ -180,12 +188,13 @@ It's open source and I'm continuing to improve it.
 
 Some things I'd like to explore:
 
-* [ ] More Home Assistant controls
+* [x] More Home Assistant controls — ingress and MQTT entities (3.0.0)
 * [ ] More display modes
 * [ ] Better tablet power management
 * [ ] More customization options
 * [ ] Additional photo sources
 * [ ] Improved tablet compatibility
+* [ ] Trash management in the app
 
 Have an idea?
 
