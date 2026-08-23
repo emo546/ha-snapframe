@@ -157,11 +157,23 @@ def main():
     except Exception as e:
         log.error("Nepodarilo sa spustiť web server: {}".format(e))
 
+    try:
+        import mqtt_publish
+        if mqtt_publish.start():
+            log.info("MQTT publikovanie spustené")
+    except Exception as e:
+        log.warning("MQTT sa nepodarilo spustiť: {}".format(e))
+
     while True:
         log.info("Kontrolujem priečinok...")
         converted = scan_folder()
         next_scan = time.time() + SCAN_INTERVAL_SECONDS
         state.update_after_scan(converted, next_scan)
+        try:
+            import mqtt_publish
+            mqtt_publish.notify()
+        except Exception:
+            pass
         log.info("Scan hotový, skonvertovaných: {}, ďalší scan o {:.1f} h".format(
             converted, SCAN_INTERVAL_SECONDS / 3600))
 
