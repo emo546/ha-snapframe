@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.11.0] – 2026
+
+### Added
+- **Import the municipal collection schedule from a file** – upload the leaflet in the app (Settings → *Waste collection…* → *"Import from schedule…"*) and SnapFrame reads the collection dates out of it, instead of you typing a year's worth of dates by hand.
+  - **Vector PDFs are parsed locally – no OCR, no network, no API key.** Municipal schedules are grid calendars where the meaning is carried by the *colour of the cell*, not by text: OCR would return the day numbers with no idea which of them are collections. A vector PDF, though, contains both the day numbers and the coloured rectangles with their coordinates, so they can be matched directly. Row = ISO week number and column = weekday, so **(ISO week + weekday) gives the exact date**, and the printed day number is then used as a checksum — a cell that doesn't agree is discarded rather than guessed.
+  - **Detects series, not waste types.** The palette is deliberately not hard-coded: one village marks plastic yellow, the next marks it blue, and the *same* leaflet routinely carries several schedules at once (a fortnightly and a monthly mixed-waste round, for instance) — which one applies to a given household is something only the resident knows. The import lists every colour series it found, with a swatch, how often it recurs and its date range, and you tick the ones that apply and assign each a waste type.
+  - **Understands cell outlines.** A coloured border around a cell marks a subset or an add-on rather than a separate waste type (on a real leaflet: a green outline on a black cell = the monthly-frequency round, a brown outline on a yellow cell = "bio *and* plastic on the same day"). Both the per-colour total and the exact fill/outline combination are offered, so either reading can be picked.
+  - **Nothing is ever saved automatically** – the parsed dates land in the editor for confirmation first. A misread date means a missed bin, which is precisely what this feature exists to prevent.
+  - Concrete dates are imported rather than an inferred recurrence rule, so real-world exceptions survive: a fortnightly round that skips New Year's Eve stays skipped instead of producing a phantom reminder.
+- **Optional fallback for scans and photos** – if the layout isn't one the parser recognises, or you upload a JPG/PNG instead of a vector PDF, SnapFrame can send the file to Claude to extract the dates. This is **off unless you set `anthropic_api_key`**, and it is the only path in SnapFrame that sends anything outside your network — the parser above needs no key and no internet.
+- New config option: `anthropic_api_key` (optional, empty by default).
+- New endpoint: `POST /waste/import` (returns detected series; saves nothing).
+- 15 further unit tests covering the parser, built on generated PDFs whose marked days are known exactly.
+- Documentation: a full *Importing the municipal schedule* section, troubleshooting entries for a schedule that can't be read or whose colours map to the wrong type, and security notes covering the one optional feature that can send data off your network.
+
+### Fixed
+- The grid-cell radius used when matching colour marks to days is now derived from the page's own row/column pitch instead of a fixed point value, so the same schedule laid out at a different page size no longer risks attaching a mark to the neighbouring day.
+
+## [2.10.0] – 2026
+
+### Added
+- **Waste collection calendar** – set up which days of the year each waste type is collected (mixed, bio, plastic, paper, glass, metal, drink cartons, e-waste, bulky, other) and the frame reminds you the day before, so the bin actually makes it to the kerb.
+  - **Rules, not endless date lists.** Real municipal schedules are almost always *"every other Thursday"* or *"first Monday of the month"*, so a collection is defined as a rule: **every N weeks** on a weekday (with a reference date that fixes which week is the right one), **monthly** by position (*first / last Monday…*, optionally limited to certain months) or by day number, or a plain **list of specific dates** for irregular pickups. Every rule can additionally have a validity range (*valid from / until*), **exceptions** (public holidays – no collection) and **extra one-off dates**.
+  - **Two reminder styles, configurable** – a discreet **corner badge** shown on top of the photos the whole time, a **full-screen reminder** injected every *N* photos (same pattern as the weather screen), or both at once.
+  - **Configurable lead time** – remind 0–7 days ahead, optionally also on the collection day itself, and optionally only from a given hour (so the "tomorrow" reminder doesn't nag from 6 a.m.).
+  - **Set up entirely in the app** – a full editor behind Settings → *Waste collection…*, so no add-on restart and no hand-editing YAML with dozens of dates. The schedule is stored in `/data/waste_schedule.json` and shared by every tablet pointed at the add-on.
+  - The frame decides what "tomorrow" means using the *tablet's* local time, not the container's – the server only ships the expanded list of upcoming collection days, so a container running in UTC can't shift the reminder by a day.
+- New endpoints: `GET`/`POST` `/waste/config`, `GET /waste/status`, and `GET /waste/next` – the last one is shaped for a Home Assistant REST sensor (`state` is the next collection date, with `days_until` and the waste types), so you can also send a phone notification or drive automations from the same schedule.
+- Slovak, English and German translations for the whole feature, including waste-type names and human-readable rule summaries.
+- **Unit tests** for the schedule engine (`tests/test_waste.py`, 30 cases covering recurrence phases, month-edge cases, exceptions/extras and config sanitisation) plus a CI step that runs them.
+
+### Changed
+- The weather screen and the waste reminder never overlap: while the weather screen is up (or during night mode, or outside the slideshow) the corner badge stays hidden, and each keeps its own photo counter so both interleave cleanly.
+
 ## [2.9.1] – 2026
 
 ### Fixed

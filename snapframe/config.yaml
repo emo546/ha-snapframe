@@ -1,7 +1,7 @@
 name: "SnapFrame – Digital Photo Frame"
-version: "2.9.1"
+version: "2.11.0"
 slug: "snapframe"
-description: "Turn any old tablet or iPad into a smart digital photo frame. Watches an SMB share, converts HEIC/HEIF to JPG, and serves a fullscreen slideshow with albums, EXIF date/GPS overlay, swipe gestures, web upload, night mode and a motion-triggered weather screen."
+description: "Turn any old tablet or iPad into a smart digital photo frame. Watches an SMB share, converts HEIC/HEIF to JPG, and serves a fullscreen slideshow with albums, EXIF date/GPS overlay, swipe gestures, web upload, night mode, a motion-triggered weather screen and waste-collection reminders."
 url: "https://github.com/emo546/ha-snapframe"
 arch:
   - aarch64
@@ -31,6 +31,7 @@ options:
   sleep_end: ""
   weather_photo_interval: 8
   weather_mode_duration_minutes: 120
+  anthropic_api_key: ""
 schema:
   smb_server: str
   smb_share: str
@@ -52,6 +53,7 @@ schema:
   sleep_end: str
   weather_photo_interval: int(2,50)
   weather_mode_duration_minutes: int(5,720)
+  anthropic_api_key: "password?"
 ports:
   8099/tcp: 8099
 ports_description:

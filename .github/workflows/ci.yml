@@ -75,6 +75,8 @@ jobs:
           pip install --quiet ruff
           ruff check --select E9,F63,F7,F82 --target-version py312 \
             snapframe/rootfs/usr/bin
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
 
   build:
     name: Build ${{ matrix.arch }}

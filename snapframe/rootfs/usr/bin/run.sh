@@ -20,6 +20,7 @@ SLEEP_START=$(bashio::config 'sleep_start')
 SLEEP_END=$(bashio::config 'sleep_end')
 WEATHER_PHOTO_INTERVAL=$(bashio::config 'weather_photo_interval')
 WEATHER_MODE_DURATION_MIN=$(bashio::config 'weather_mode_duration_minutes')
+ANTHROPIC_API_KEY=$(bashio::config 'anthropic_api_key')
 
 # bashio vracia "null" pre nové polia ktoré ešte nie sú v options – nahraď defaultmi
 [ "${THUMB_QUALITY}" = "null" ]      && THUMB_QUALITY="82"
@@ -31,6 +32,7 @@ WEATHER_MODE_DURATION_MIN=$(bashio::config 'weather_mode_duration_minutes')
 [ "${SLEEP_END}" = "null" ]           && SLEEP_END=""
 [ "${WEATHER_PHOTO_INTERVAL}" = "null" ]    && WEATHER_PHOTO_INTERVAL="8"
 [ "${WEATHER_MODE_DURATION_MIN}" = "null" ] && WEATHER_MODE_DURATION_MIN="120"
+[ "${ANTHROPIC_API_KEY}" = "null" ]           && ANTHROPIC_API_KEY=""
 
 bashio::log.info "SMB server: ${SMB_SERVER}"
 bashio::log.info "SMB share: ${SMB_SHARE}"
@@ -89,6 +91,7 @@ export SLEEP_START
 export SLEEP_END
 export WEATHER_PHOTO_INTERVAL
 export WEATHER_MODE_DURATION_MIN
+export ANTHROPIC_API_KEY
 export PYTHONPATH="/usr/bin:${PYTHONPATH:-}"
 
 bashio::log.info "Slideshow interval: ${SLIDESHOW_SECONDS} s"

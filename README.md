@@ -42,6 +42,8 @@ You can display your family photos, organize them into albums, show photo inform
 | 📅 **EXIF information**           | Display photo date and GPS information                |
 | 🌙 **Night mode**                 | Automatically switch the display to night mode during the night |
 | 🌤️ **Weather mode**              | Show weather information when triggered               |
+| 🗑️ **Waste collection reminders** | Know the day before which bin to put out               |
+| 📄 **Schedule import**            | Upload the municipal leaflet, dates are read out of it |
 | 🏠 **Home Assistant integration** | Control SnapFrame using Home Assistant                |
 | 🌍 **Multi-language UI**          | Use SnapFrame in different languages                  |
 | 📱 **Old hardware friendly**      | Give an old tablet a new purpose                      |
@@ -67,6 +69,10 @@ For example:
 Or:
 
 **Night time → switch to night mode**
+
+Or:
+
+**Tomorrow is bin day → remind me on the frame (and on my phone)**
 
 Or:
 

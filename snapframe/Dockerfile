@@ -13,7 +13,9 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     pillow \
     pillow-heif \
     flask \
-    waitress
+    waitress \
+    pdfplumber \
+    anthropic
 
 COPY rootfs /
 

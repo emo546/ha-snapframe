@@ -23,5 +23,7 @@ Thumbs.db
 *.zip
 *.tar.gz
 
-# Claude Code local settings
-.claude/
+# Claude Code – personal/local settings stay out of git, but the shared
+# project settings (attribution: no Co-Authored-By trailer) are versioned
+.claude/*
+!.claude/settings.json
