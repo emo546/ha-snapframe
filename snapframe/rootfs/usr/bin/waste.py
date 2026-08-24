@@ -67,6 +67,7 @@ DEFAULT_CONFIG = {
     "days_before":    1,           # koľko dní vopred upozorniť
     "show_on_day":    True,        # upozorniť aj ráno v deň vývozu
     "start_hour":     0,           # deň-vopred upozornenie zobrazovať až od tejto hodiny
+    "end_hour":       24,          # upozornenie v deň vývozu zobrazovať len do tejto hodiny (24 = celý deň)
     "rules":          [],
 }
 
@@ -208,6 +209,7 @@ def sanitize_config(raw):
         "days_before":    _clamp_int(raw.get("days_before"), 0, 7, 1),
         "show_on_day":    bool(raw.get("show_on_day", True)),
         "start_hour":     _clamp_int(raw.get("start_hour"), 0, 23, 0),
+        "end_hour":       _clamp_int(raw.get("end_hour"), 1, 24, 24),
         "rules":          [],
     }
     if cfg["days_before"] == 0:

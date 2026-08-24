@@ -60,6 +60,7 @@ function applyTranslations() {
   document.getElementById("t-waste-days-label").textContent     = tr("waste_days_label");
   document.getElementById("t-waste-show-on-day").textContent    = tr("waste_show_on_day");
   document.getElementById("t-waste-start-hour").textContent     = tr("waste_start_hour");
+  document.getElementById("t-waste-end-hour").textContent       = tr("waste_end_hour");
   document.getElementById("t-waste-rules-label").textContent    = tr("waste_rules_label");
   document.getElementById("t-waste-add-rule").textContent       = tr("waste_add_rule");
   document.getElementById("t-waste-preview").textContent        = tr("waste_preview");
@@ -753,6 +754,8 @@ function currentWasteAlert() {
     if (!types || !types.length) { continue; }
     // deň-vopred pripomienku netlačiť skôr, než si používateľ praje
     if (off >= 1 && now.getHours() < (wasteCfg.start_hour || 0)) { continue; }
+    // v deň vývozu pripomienku po nastavenej hodine už neukazovať (kontajner je vonku zbytočne dlho)
+    if (off === 0 && now.getHours() >= (wasteCfg.end_hour == null ? 24 : wasteCfg.end_hour)) { continue; }
     return { days: off, date: _isoLocal(d), types: types };
   }
   return null;
@@ -905,6 +908,8 @@ function wdRenderMain() {
   document.getElementById("waste-interval-val").innerHTML = wdCfg.photo_interval;
   document.getElementById("waste-days-val").innerHTML     = wdCfg.days_before;
   document.getElementById("waste-hour-val").innerHTML     = _pad2(wdCfg.start_hour) + ":00";
+  document.getElementById("waste-end-hour-val").innerHTML =
+      wdCfg.end_hour >= 24 ? tr("waste_end_hour_all_day") : (_pad2(wdCfg.end_hour) + ":00");
   document.getElementById("waste-showday-check").className =
       "wd-check" + (wdCfg.show_on_day ? " on" : "");
   wdRenderRules();
