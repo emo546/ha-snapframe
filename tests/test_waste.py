@@ -167,11 +167,20 @@ class TestSanitize(unittest.TestCase):
     def test_values_are_clamped_and_whitelisted(self):
         cfg = waste.sanitize_config({
             "mode": "../../etc/passwd", "photo_interval": 10 ** 9,
-            "days_before": -5, "start_hour": 99})
+            "days_before": -5, "start_hour": 99, "end_hour": 99})
         self.assertEqual(cfg["mode"], "overlay")
         self.assertEqual(cfg["photo_interval"], 100)
         self.assertEqual(cfg["days_before"], 0)
         self.assertEqual(cfg["start_hour"], 23)
+        self.assertEqual(cfg["end_hour"], 24)
+
+    def test_end_hour_defaults_to_all_day(self):
+        cfg = waste.sanitize_config({})
+        self.assertEqual(cfg["end_hour"], 24)
+
+    def test_end_hour_zero_clamped_to_minimum(self):
+        cfg = waste.sanitize_config({"end_hour": 0})
+        self.assertEqual(cfg["end_hour"], 1)
 
     def test_days_before_zero_forces_show_on_day(self):
         cfg = waste.sanitize_config({"days_before": 0, "show_on_day": False})

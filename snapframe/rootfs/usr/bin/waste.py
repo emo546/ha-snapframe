@@ -35,22 +35,26 @@ UPCOMING_DAYS = 24      # koľko dní dopredu posielame do prehliadača
 _lock = threading.Lock()
 
 # ── Katalóg druhov odpadu ────────────────────────────────────────────────────
-# icon = emoji (žiadne externé assety, funguje aj na starom iPad Safari)
+# icon = emoji (žiadne externé assety, funguje aj na starom iPad Safari).
+# Zámerne len znaky z Emoji 1.0 (Unicode 6.0–7.0, 2010–2015): novšie piktogramy
+# (napr. pôvodné 🥤/🥫 z Emoji 5.0, 🧃 z Emoji 12.0) na iOS pred verziou
+# 11.1, resp. 13.2 vôbec nevykreslia glyf – na starom iPade sa tak tvárili,
+# akoby daný druh odpadu nemal ikonu žiadnu.
 # color = farba pruhu/akcentu v UI
 WASTE_TYPES = OrderedDict([
     ("mixed",    {"icon": "\U0001F5D1️", "color": "#8b95a5",
                   "labels": {"sk": "Zmesový odpad", "en": "Mixed waste",     "de": "Restmüll"}}),
     ("bio",      {"icon": "\U0001F33F",       "color": "#7cb342",
                   "labels": {"sk": "Bioodpad",      "en": "Bio waste",       "de": "Biomüll"}}),
-    ("plastic",  {"icon": "\U0001F964",       "color": "#f2c200",
+    ("plastic",  {"icon": "\U0001F6CD️",       "color": "#f2c200",
                   "labels": {"sk": "Plasty",        "en": "Plastic",         "de": "Kunststoff"}}),
     ("paper",    {"icon": "\U0001F4C4",       "color": "#4a90e2",
                   "labels": {"sk": "Papier",        "en": "Paper",           "de": "Papier"}}),
     ("glass",    {"icon": "\U0001F37E",       "color": "#26a96c",
                   "labels": {"sk": "Sklo",          "en": "Glass",           "de": "Glas"}}),
-    ("metal",    {"icon": "\U0001F96B",       "color": "#e0574f",
+    ("metal",    {"icon": "\U0001F529",       "color": "#e0574f",
                   "labels": {"sk": "Kovy",          "en": "Metal",           "de": "Metall"}}),
-    ("tetrapak", {"icon": "\U0001F9C3",       "color": "#ff8a3d",
+    ("tetrapak", {"icon": "\U0001F4E6",       "color": "#ff8a3d",
                   "labels": {"sk": "Tetrapak (VKM)", "en": "Drink cartons",  "de": "Getränkekartons"}}),
     ("electro",  {"icon": "\U0001F50C",       "color": "#a855f7",
                   "labels": {"sk": "Elektroodpad",  "en": "E-waste",         "de": "Elektroschrott"}}),
@@ -67,6 +71,7 @@ DEFAULT_CONFIG = {
     "days_before":    1,           # koľko dní vopred upozorniť
     "show_on_day":    True,        # upozorniť aj ráno v deň vývozu
     "start_hour":     0,           # deň-vopred upozornenie zobrazovať až od tejto hodiny
+    "end_hour":       24,          # upozornenie v deň vývozu zobrazovať len do tejto hodiny (24 = celý deň)
     "rules":          [],
 }
 
@@ -208,6 +213,7 @@ def sanitize_config(raw):
         "days_before":    _clamp_int(raw.get("days_before"), 0, 7, 1),
         "show_on_day":    bool(raw.get("show_on_day", True)),
         "start_hour":     _clamp_int(raw.get("start_hour"), 0, 23, 0),
+        "end_hour":       _clamp_int(raw.get("end_hour"), 1, 24, 24),
         "rules":          [],
     }
     if cfg["days_before"] == 0:

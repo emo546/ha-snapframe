@@ -105,6 +105,15 @@
       </div>
 
       <div class="wd-group">
+        <div class="wd-label" id="t-waste-end-hour"></div>
+        <div class="wd-stepper">
+          <div class="wd-step-btn" onclick="wdStep('end_hour',-1,1,24)">&minus;</div>
+          <div class="wd-step-val" id="waste-end-hour-val"></div>
+          <div class="wd-step-btn" onclick="wdStep('end_hour',1,1,24)">+</div>
+        </div>
+      </div>
+
+      <div class="wd-group">
         <div class="wd-label" id="t-waste-rules-label"></div>
         <div id="waste-rule-list"></div>
         <button class="wd-btn ghost" id="t-waste-add-rule" onclick="wdNewRule()"></button>
