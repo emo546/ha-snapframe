@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.3] – 2026
+
+### Added
+
+- **Waste reminder now has an end time, not just a start time.** `show_on_day` used to keep the badge/full-screen reminder up all day once collection day started. A new `end_hour` setting (mirroring the existing day-before `start_hour`) hides it again after a chosen hour, since the bin is presumably already out and collected by then.
+
+### Fixed
+
+- **Some waste types showed no icon at all on older iPad Safari.** Plastic (🥤), metal (🥫) and drink cartons (🧃) used Emoji 5.0/12.0 glyphs (2017/2019) that Safari before iOS 11.1/13.2 can't render, so those three types silently showed no icon while the rest (all Emoji 1.0, 2015) worked fine. Replaced with equally old glyphs (shopping bags, nut and bolt, package) that render everywhere the others already do.
+
 ## [3.0.2] – 2026
 
 ### Changed
