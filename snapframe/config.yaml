@@ -1,5 +1,5 @@
 name: "SnapFrame – Digital Photo Frame"
-version: "3.0.3"
+version: "3.1.0"
 slug: "snapframe"
 description: "Turn any old tablet or iPad into a smart digital photo frame. Watches an SMB share, converts HEIC/HEIF to JPG, and serves a fullscreen slideshow with albums, EXIF date/GPS overlay, swipe gestures, web upload, night mode, a motion-triggered weather screen and waste-collection reminders. Home Assistant ingress and MQTT discovery included."
 url: "https://github.com/emo546/ha-snapframe"
@@ -37,6 +37,9 @@ options:
   sleep_end: ""
   weather_photo_interval: 8
   weather_mode_duration_minutes: 120
+  weather_display_mode: "slide"
+  weather_badge_hours: "6-22"
+  weather_badge_alerts_only: false
   anthropic_api_key: ""
   api_token: ""
   mqtt_enabled: true
@@ -67,6 +70,9 @@ schema:
   sleep_end: str
   weather_photo_interval: int(2,50)
   weather_mode_duration_minutes: int(5,720)
+  weather_display_mode: "list(slide|badge|both)"
+  weather_badge_hours: str
+  weather_badge_alerts_only: bool
   anthropic_api_key: "password?"
   api_token: "password?"
   mqtt_enabled: bool

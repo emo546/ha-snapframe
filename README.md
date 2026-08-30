@@ -42,6 +42,7 @@ You can display your family photos, organize them into albums, show photo inform
 | 📅 **EXIF information**           | Display photo date and GPS information                |
 | 🌙 **Night mode**                 | Automatically switch the display to night mode during the night |
 | 🌤️ **Weather mode**              | Show weather information when triggered               |
+| 🌡️ **Weather badge**             | Keep the temperature in the corner all day, or only when rain is coming |
 | 🗑️ **Waste collection reminders** | Know the day before which bin to put out               |
 | 📄 **Schedule import**            | Upload the municipal leaflet, dates are read out of it |
 | 🏠 **Home Assistant integration** | Control SnapFrame using Home Assistant                 |

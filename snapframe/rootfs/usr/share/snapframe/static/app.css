@@ -254,6 +254,15 @@ html, body {
   letter-spacing: 0.22em; text-transform: uppercase;
   color: rgba(255,255,255,0.32);
 }
+/* Vek dát: bez neho sa nedá rozoznať čerstvá teplota od tej, ktorú Home
+   Assistant naposledy poslal pred pár hodinami. Zámerne nenápadné. */
+.weather-age {
+  position: absolute; bottom: 10px; bottom: clamp(6px, 1.2vh, 16px);
+  left: 0; right: 0; text-align: center;
+  font-size: 12px; font-size: clamp(11px, 1vw, 15px);
+  letter-spacing: 0.1em;
+  color: rgba(255,255,255,0.22);
+}
 /* — Portrét (tablet/telefón na výšku): hero na stred, hodiny ako riadky zhora dole — */
 @media (orientation: portrait) {
   #weather-slide {
@@ -310,6 +319,9 @@ html, body {
     position: static;
     margin-top: 24px; margin-top: clamp(16px, 3vh, 34px); bottom: auto;
   }
+  .weather-age {
+    position: static; margin-top: 6px; bottom: auto;
+  }
 }
 /* ===== ODPAD: štítok v rohu fotky ===== */
 /* Rovnaký princíp ako weather slide: vždy px fallback pred clamp(),
@@ -341,6 +353,27 @@ html, body {
 .wb-what {
   font-size: 26px; font-size: clamp(20px, 2.2vw, 36px);
   font-weight: 300; color: #fff; line-height: 1.15;
+}
+/* ===== POČASIE: štítok v pravom hornom rohu fotky ===== */
+/* Zrkadlo štítku odpadu (ten je vľavo hore, takže si neprekážajú) a zámerne
+   používa tie isté .wb-* triedy – rovnaké rozmery, rovnaké fallbacky pre staré
+   iPad Safari, len akcent je vpravo, keďže štítok drží pravý okraj. */
+#weather-badge {
+  position: absolute; top: 16px; right: 18px; z-index: 95;
+  display: none; max-width: 46%;
+  background: rgba(8,10,14,0.62);
+  border-radius: 14px; border-radius: clamp(12px, 1.2vw, 18px);
+  border-right: 6px solid #9aa5b1;
+  padding: 12px 14px 12px 18px;
+  padding: clamp(9px, 1.4vh, 18px) clamp(10px, 1.1vw, 18px) clamp(9px, 1.4vh, 18px) clamp(13px, 1.5vw, 24px);
+  -webkit-box-sizing: border-box; box-sizing: border-box;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+  pointer-events: none;
+}
+#weather-badge.visible { display: block; }
+/* Teplota je tu to hlavné číslo, takže o kúsok väčšia než text na štítku odpadu. */
+#weather-badge .wb-what {
+  font-size: 30px; font-size: clamp(23px, 2.6vw, 42px); font-weight: 200;
 }
 /* ===== ODPAD: celoobrazovkový slide ===== */
 #waste-slide {

@@ -135,6 +135,9 @@ You can also embed it as an `iframe` panel in your Lovelace dashboard if you'd r
 | `sleep_end` | *(empty)* | Night mode end time, e.g. `07:00`; leave empty to disable |
 | `weather_photo_interval` | `8` | How many photos to show between weather screens while weather mode is active (2–50) |
 | `weather_mode_duration_minutes` | `120` | How long weather mode stays active after being triggered via `/weather-mode/on` (5–720) |
+| `weather_display_mode` | `slide` | How the weather is shown: `slide` = full-screen between photos while weather mode is active, `badge` = a small badge in the top-right corner during the day, `both` |
+| `weather_badge_hours` | `6-22` | When the corner badge may appear, as `start-end` in whole hours. May wrap past midnight (`22-6`). Leave empty for all day |
+| `weather_badge_alerts_only` | `false` | Show the corner badge only when there is something to report (rain, snow, storm, frost or heat in the next few hours) instead of showing the temperature all day |
 | `anthropic_api_key` | `""` | **Optional.** Enables reading a collection schedule from a photo/scan when the local PDF parser can't handle it. Leave empty to keep everything on your own network — see [Importing the municipal schedule](#importing-the-municipal-schedule) |
 | `api_token` | `""` | **Optional but recommended.** When set, every endpoint that changes something (upload, delete, scan, waste config/import, weather push) requires the token — see [Protecting the write endpoints](#protecting-the-write-endpoints) |
 | `mqtt_enabled` | `true` | Publish SnapFrame state to Home Assistant via MQTT discovery |
@@ -166,6 +169,9 @@ sleep_start: "23:00"
 sleep_end: "07:00"
 weather_photo_interval: 8
 weather_mode_duration_minutes: 120
+weather_display_mode: "both"
+weather_badge_hours: "6-22"
+weather_badge_alerts_only: false
 anthropic_api_key: ""
 ```
 
@@ -450,6 +456,24 @@ weather.home (state change / every 30 min) ──▶ Automation ──▶ POST /
 
 While weather mode is active, the slideshow inserts one weather screen after every `weather_photo_interval` photos (default: every 8 photos), showing a big weather icon, current temperature, condition text (translated to your UI language), and today's forecast high/low — then returns to normal photos automatically.
 
+### The corner badge (all day, no weather mode needed)
+
+Weather mode is deliberately short-lived: motion triggers it in the morning and it switches itself off a couple of hours later. If you also want the weather on screen for the rest of the day, set `weather_display_mode` to `badge` (or `both`) and a small badge appears in the **top-right corner** on top of the photos — icon, temperature and today's high/low — mirroring the waste-collection badge in the opposite corner. While it is up, the photo counter steps aside so the two don't overlap.
+
+`weather_badge_hours` limits it to the part of the day you care about (default `6-22`), and `weather_badge_alerts_only` turns it into a genuine notification: the badge then stays hidden until the hourly forecast shows **rain, snow or a storm within the next 3 hours**, or **frost or heat within the next 6**, and its accent colour matches what it is warning about.
+
+The badge is driven by the same data as the weather screen, so it needs no extra endpoint — but it does need the update automation below to keep running all day, not just in the morning.
+
+### Keeping the big temperature honest
+
+`temperature` in `/weather-update` is only current at the moment Home Assistant pushes it. A frame that runs all day would otherwise keep showing the value from the morning push. So the frame decides for itself what to display:
+
+- **push younger than 20 minutes** → the pushed value is used as-is (it is a measurement)
+- **older than that** → the temperature is **interpolated from the hourly forecast** that arrived with it, so the number moves smoothly through the day instead of jumping on the hour
+- **beyond the end of that forecast** (nothing pushed for ~12 h) → `--°`, and the badge hides rather than lying
+
+The weather screen prints the data's age underneath (`updated 12 min ago`, or `from the hourly forecast · updated 4 h ago`), so a stalled automation is visible instead of silent. The hourly strip likewise drops hours that have already passed, so the highlighted "now" card really is now.
+
 ### 1. Add a `rest_command` for each call
 
 In your Home Assistant `configuration.yaml` (replace `192.168.1.x` with your SnapFrame add-on's IP/hostname and port):
@@ -504,6 +528,10 @@ automation:
     trigger:
       - platform: time_pattern
         minutes: "/30"
+      # Push on every change of the entity too, so the frame gets a fresh
+      # measurement as soon as one exists rather than up to 30 minutes later.
+      - platform: state
+        entity_id: weather.home
     action:
       - service: weather.get_forecasts
         target:
@@ -543,7 +571,7 @@ To turn weather mode off early (e.g. from another automation, or a script tied t
 | `POST` | `/weather-mode/on` | Activate weather mode for `weather_mode_duration_minutes` |
 | `POST` | `/weather-mode/off` | Deactivate weather mode immediately |
 | `POST` | `/weather-update` | Push current weather data (JSON body, see [Weather mode](#weather-mode-motion-triggered-morning-briefing)) |
-| `GET` | `/weather` | JSON with weather-mode status and the last pushed weather data |
+| `GET` | `/weather` | JSON with weather-mode status, the last pushed weather data, and `age_seconds` — how old that push is, which is what lets the frame tell a fresh measurement from a stale one |
 | `GET` | `/waste/config` | Full waste calendar config + the waste-type catalogue (used by the in-app editor) |
 | `POST` | `/waste/config` | Replace the waste calendar config (JSON body; validated and clamped server-side) |
 | `GET` | `/waste/status` | Display settings + expanded collection days for the next ~3 weeks |

@@ -109,6 +109,73 @@ class TestWeatherHourLabel(unittest.TestCase):
         self.assertEqual(out[0]["time"], "16:00")
 
 
+class TestWeatherBadgeHours(unittest.TestCase):
+    """Okno, v ktorom sa smie ukázať štítok počasia. Zle zadaná hodnota nesmie
+    štítok potichu vypnúť na celý deň – vtedy platí "bez obmedzenia"."""
+
+    def test_plain_window(self):
+        self.assertEqual(webserver._parse_badge_hours("6-22"), (6, 22))
+
+    def test_spaces_are_tolerated(self):
+        self.assertEqual(webserver._parse_badge_hours(" 6 - 22 "), (6, 22))
+
+    def test_window_may_wrap_past_midnight(self):
+        self.assertEqual(webserver._parse_badge_hours("22-6"), (22, 6))
+
+    def test_empty_means_no_limit(self):
+        self.assertEqual(webserver._parse_badge_hours(""), (None, None))
+        self.assertEqual(webserver._parse_badge_hours(None), (None, None))
+
+    def test_nonsense_means_no_limit(self):
+        for raw in ("6", "6-22-3", "rano-vecer", "6-99", "-1-5", "8-8"):
+            with self.subTest(raw=raw):
+                self.assertEqual(webserver._parse_badge_hours(raw), (None, None))
+
+
+class TestWeatherFreshness(WebTestCase):
+    """Veľká teplota na ráme bola tá, ktorá platila v čase pushu z Home
+    Assistanta. Rám ju vie dopočítať z hodinovej predpovede, ale len keď vie,
+    aké staré tie dáta sú – preto /weather posiela vek dát."""
+
+    def setUp(self):
+        super().setUp()
+        self._state = webserver._state
+        self._state.set_weather_data({"temperature": None})   # čistý štart
+
+    def test_age_is_zero_right_after_a_push(self):
+        r = self.client.post("/weather-update", json={"temperature": 21.4, "condition": "sunny"})
+        self.assertTrue(r.get_json()["ok"])
+        status = self.client.get("/weather").get_json()
+        self.assertEqual(status["data"]["temperature"], 21.4)
+        self.assertIsNotNone(status["age_seconds"])
+        self.assertLess(status["age_seconds"], 5)
+
+    def test_age_grows_with_time(self):
+        self.client.post("/weather-update", json={"temperature": 21.4})
+        self._state._weather_updated_at -= 3600      # push spred hodiny
+        self.assertGreaterEqual(self.client.get("/weather").get_json()["age_seconds"], 3600)
+
+    def test_age_is_null_when_nothing_was_ever_pushed(self):
+        self._state._weather_updated_at = None
+        self.assertIsNone(self.client.get("/weather").get_json()["age_seconds"])
+
+    def test_hourly_forecast_survives_the_push_intact(self):
+        """Z nej rám dopočítava aktuálnu teplotu, keď je push starý."""
+        r = self.client.post("/weather-update", json={
+            "temperature": 21.4,
+            "hourly": [
+                {"datetime": "2026-08-23T14:00:00+00:00", "temperature": 21, "condition": "sunny"},
+                {"datetime": "2026-08-23T15:00:00+00:00", "temperature": 25, "condition": "rainy"},
+            ],
+        })
+        self.assertTrue(r.get_json()["ok"])
+        hourly = self.client.get("/weather").get_json()["data"]["hourly"]
+        self.assertEqual(len(hourly), 2)
+        self.assertEqual([h["temperature"] for h in hourly], [21.0, 25.0])
+        self.assertEqual([h["iso"] for h in hourly],
+                         ["2026-08-23T14:00:00+00:00", "2026-08-23T15:00:00+00:00"])
+
+
 class TestPathTraversal(WebTestCase):
     """Cesta z URL nesmie opustiť knižnicu fotiek."""
 
@@ -387,6 +454,15 @@ class TestPage(WebTestCase):
         self.assertNotIn("__SNAPFRAME_CFG__", html)
         self.assertNotIn("__ASSET_V__", html)
         self.assertIn("window.SNAPFRAME_CFG", html)
+
+    def test_page_config_carries_the_weather_badge_settings(self):
+        """Štítok počasia beží celý deň v prehliadači, takže tieto voľby musia
+        prejsť do stránky – bez nich by o nich rám nevedel."""
+        html = self.client.get("/").get_data(as_text=True)
+        for key in ("weather_display", "weather_badge_from", "weather_badge_to",
+                    "weather_badge_alerts_only", "weather_conditions"):
+            with self.subTest(key=key):
+                self.assertIn('"' + key + '"', html)
 
     def test_static_assets_are_served_and_cacheable(self):
         for asset in ("/static/app.js", "/static/app.css"):

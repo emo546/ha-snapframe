@@ -65,6 +65,15 @@ configuration:
   weather_mode_duration_minutes:
     name: "Dauer des Wettermodus (Minuten)"
     description: "Wie lange der Wettermodus nach Auslösung aktiv bleibt."
+  weather_display_mode:
+    name: "Wie das Wetter angezeigt wird"
+    description: "slide = Vollbild zwischen den Fotos (nur im Wettermodus); badge = kleines Schild in der Ecke tagsüber; both = beides."
+  weather_badge_hours:
+    name: "Zeitfenster für das Eckschild"
+    description: "Wann das Schild erscheinen darf, z. B. 6-22. Leer = ganzer Tag."
+  weather_badge_alerts_only:
+    name: "Eckschild nur bei Meldungen"
+    description: "Zeigt das Schild nur bei Regen, Schnee, Gewitter, Frost oder Hitze in den nächsten Stunden, statt ganztägig die Temperatur."
   anthropic_api_key:
     name: "Claude-API-Schlüssel (optional)"
     description: "Wird nur genutzt, wenn der Abfuhrkalender lokal nicht lesbar ist."

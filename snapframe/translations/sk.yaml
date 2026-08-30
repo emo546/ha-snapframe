@@ -65,6 +65,15 @@ configuration:
   weather_mode_duration_minutes:
     name: "Trvanie weather mode (minúty)"
     description: "Ako dlho zostane weather mode zapnutý po spustení pohybovým senzorom."
+  weather_display_mode:
+    name: "Ako zobraziť počasie"
+    description: "slide = celá obrazovka medzi fotkami (len počas weather mode); badge = malý štítok v rohu počas dňa; both = oboje."
+  weather_badge_hours:
+    name: "Hodiny pre štítok v rohu"
+    description: "Kedy sa smie štítok ukázať, napr. 6-22. Prázdne = celý deň."
+  weather_badge_alerts_only:
+    name: "Štítok len keď je čo hlásiť"
+    description: "Štítok sa ukáže len pri daždi, snežení, búrke, mraze alebo horúčave v najbližších hodinách – namiesto toho, aby teplotu ukazoval celý deň."
   anthropic_api_key:
     name: "API kľúč Claude (nepovinné)"
     description: "Použije sa len vtedy, keď sa harmonogram nepodarí prečítať lokálne. Je to jediná funkcia, ktorá posiela dáta mimo tvoju sieť."

@@ -5,6 +5,11 @@ var SLIDESHOW_SECS   = CFG.slideshow_secs  || 30;
 var SLEEP_START      = CFG.sleep_start     || "";
 var SLEEP_END        = CFG.sleep_end       || "";
 var WEATHER_INTERVAL = CFG.weather_interval || 8;
+var WEATHER_DISPLAY  = CFG.weather_display  || "slide";   // slide | badge | both
+var WEATHER_BADGE_FROM = (CFG.weather_badge_from == null) ? null : CFG.weather_badge_from;
+var WEATHER_BADGE_TO   = (CFG.weather_badge_to   == null) ? null : CFG.weather_badge_to;
+var WEATHER_BADGE_ALERTS_ONLY = !!CFG.weather_badge_alerts_only;
+var WEATHER_CONDITIONS = CFG.weather_conditions || {};
 var WEEKDAYS         = CFG.weekdays        || [];
 var WEEKDAYS_SHORT   = CFG.weekdays_short  || [];
 var MONTHS_LIST      = CFG.months          || [];
@@ -233,7 +238,7 @@ function checkSleep() {
     }
     if (advanceTimer) { clearInterval(advanceTimer); advanceTimer = null; }
     if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
-    updateWasteBadge();
+    updateBadges();
     maybeDailyReload();
   } else {
     el.style.display = "none";
@@ -449,6 +454,7 @@ function goBack() {
   photosSinceWeather = 0;
   photosSinceWaste   = 0;
   slideshowActive = false;
+  updateBadges();
   document.getElementById("screen-slideshow").style.display = "none";
   document.getElementById("screen-select").style.display    = "";
   loadAlbums();
@@ -545,7 +551,7 @@ function showPhoto(index) {
 
   document.getElementById("photo-counter").innerHTML = (idx + 1) + " / " + photos.length;
   loadExifOverlay(filename);
-  updateWasteBadge();
+  updateBadges();
 }
 var _showToken = 0;
 
@@ -577,7 +583,8 @@ function maybeDailyReload() {
 
 function advanceTick() {
   if (maybeDailyReload()) { return; }
-  if (weatherModeActive && weatherData && photosSinceWeather >= WEATHER_INTERVAL) {
+  if (weatherDisplayHas("slide") && weatherModeActive && weatherData &&
+      photosSinceWeather >= WEATHER_INTERVAL) {
     photosSinceWeather = 0;
     photosSinceWaste++;
     showWeatherSlide();
@@ -605,6 +612,8 @@ function startAdvanceTimer() {
 var weatherModeActive   = false;
 var weatherData         = null;
 var photosSinceWeather  = 0;
+var weatherAgeBase      = null;   // vek dát v sekundách podľa servera pri poslednom fetchi
+var weatherAgeAt        = 0;      // Date.now() toho fetchu
 
 var WEATHER_EMOJI = {
   "sunny": "☀️", "clear-night": "🌙",
@@ -623,10 +632,110 @@ function fetchWeatherStatus() {
       var data = JSON.parse(text);
       weatherModeActive = !!data.active;
       weatherData = data.data || null;
+      // Vek dát počíta server (rozdiel dvoch časov z jedných hodín), rám si
+      // k nemu len priráta, koľko ubehlo od fetchu – vlastné hodiny tabletu
+      // tak nemôžu vek pokaziť, aj keby boli rozhodené o hodiny.
+      weatherAgeBase = (typeof data.age_seconds === "number") ? data.age_seconds : null;
+      weatherAgeAt   = Date.now();
     } catch (e) {}
+    updateBadges();
   });
 }
 setInterval(fetchWeatherStatus, 60000);
+
+// Odznak sa musí prekresľovať aj medzi fetchmi: mení sa interpolovaná
+// teplota, hodina v okne zobrazenia aj to, či je ešte čo hlásiť.
+setInterval(updateBadges, 60000);
+
+function weatherAgeSeconds() {
+  if (weatherAgeBase == null) { return null; }
+  return weatherAgeBase + (Date.now() - weatherAgeAt) / 1000;
+}
+
+/** Hodinová predpoveď ako body na časovej osi (ms), zoradené a bez nepoužiteľných.
+ * Bez `iso` sa bod nedá umiestniť v čase, takže sa na výpočty nehodí. */
+function _hourlyPoints(hourly) {
+  var pts = [], i, t;
+  if (!hourly || !hourly.length) { return pts; }
+  for (i = 0; i < hourly.length; i++) {
+    if (!hourly[i] || !hourly[i].iso || hourly[i].temperature == null) { continue; }
+    t = new Date(hourly[i].iso).getTime();
+    if (isNaN(t)) { continue; }
+    pts.push({ t: t, temp: hourly[i].temperature, cond: hourly[i].condition || "", raw: hourly[i] });
+  }
+  pts.sort(function(a, b) { return a.t - b.t; });
+  return pts;
+}
+
+/** Teplota a podmienka pre `nowMs`, dopočítané z hodinovej predpovede.
+ * Medzi dvoma hodinami sa teplota interpoluje lineárne, takže číslo na
+ * obrazovke rastie plynulo namiesto skoku vždy o celej hodine.
+ * Mimo rozsahu predpovede (viac než hodinu pred prvou alebo za poslednou)
+ * vráti null – vtedy sa už nedá tvrdiť nič. */
+function weatherFromHourly(hourly, nowMs) {
+  var pts = _hourlyPoints(hourly), i, a, b, f;
+  if (!pts.length) { return null; }
+  if (nowMs < pts[0].t) {
+    return (pts[0].t - nowMs <= 3600000)
+      ? { temperature: pts[0].temp, condition: pts[0].cond } : null;
+  }
+  for (i = 0; i < pts.length - 1; i++) {
+    a = pts[i]; b = pts[i + 1];
+    if (nowMs >= a.t && nowMs <= b.t) {
+      f = (b.t === a.t) ? 0 : (nowMs - a.t) / (b.t - a.t);
+      return {
+        temperature: a.temp + (b.temp - a.temp) * f,
+        condition:   (f < 0.5 ? a.cond : b.cond)
+      };
+    }
+  }
+  a = pts[pts.length - 1];
+  return (nowMs - a.t <= 3600000)
+    ? { temperature: a.temp, condition: a.cond } : null;
+}
+
+var WEATHER_FRESH_SECS = 20 * 60;   // dokedy sa pushnutá hodnota berie ako aktuálna
+
+/** Čo naozaj ukázať ako aktuálne počasie.
+ *
+ * `temperature` z /weather-update je aktuálna len v okamihu pushu; keď rám
+ * beží celý deň a Home Assistant medzitým nič nepošle, ostane na obrazovke
+ * ranná hodnota. Kým je push čerstvý, berieme ho (je to meranie), potom sa
+ * teplota dopočítava z hodinovej predpovede, ktorá prišla s ním.
+ * Vráti {temperature, condition, derived} alebo null, keď sa už nedá tvrdiť nič. */
+function currentWeather() {
+  var d = weatherData;
+  if (!d) { return null; }
+  var age = weatherAgeSeconds();
+  if (d.temperature != null && (age == null || age <= WEATHER_FRESH_SECS)) {
+    return { temperature: d.temperature, condition: d.condition || "", derived: false };
+  }
+  var h = weatherFromHourly(d.hourly, Date.now());
+  if (h) {
+    return { temperature: h.temperature, condition: h.condition, derived: true };
+  }
+  // Bez hodinovej predpovede niet z čoho dopočítať – pushnutá hodnota je
+  // stále lepšia než nič a riadok s vekom pod ňou povie, aká je stará.
+  if (!_hourlyPoints(d.hourly).length && d.temperature != null) {
+    return { temperature: d.temperature, condition: d.condition || "", derived: false };
+  }
+  return null;
+}
+
+function weatherCondLabel(cond) {
+  return WEATHER_CONDITIONS[cond] || cond || "";
+}
+
+/** "aktualizované pred 12 min" – z veku dát, s poznámkou keď je hodnota
+ * dopočítaná z predpovede namiesto z merania. */
+function weatherAgeLabel(derived) {
+  var age = weatherAgeSeconds(), txt;
+  if (age == null) { return ""; }
+  if (age < 90)          { txt = tr("weather_age_now"); }
+  else if (age < 3600)   { txt = trf("weather_age_min",  [Math.round(age / 60)]); }
+  else                   { txt = trf("weather_age_hour", [Math.round(age / 3600)]); }
+  return derived ? (tr("weather_age_forecast") + " · " + txt) : txt;
+}
 
 // Po otočení obrazovky (portrét <-> landscape) prekresli weather slide,
 // aby sa počet a rozloženie hodinových kariet prispôsobili orientácii.
@@ -640,9 +749,13 @@ window.addEventListener("resize", function() {
 function showWeatherSlide() {
   var d = weatherData;
   if (!d) { return; }
-  document.getElementById("weather-icon").textContent = WEATHER_EMOJI[d.condition] || "🌡️";
-  document.getElementById("weather-temp").textContent = (d.temperature != null) ? Math.round(d.temperature) + "°" : "--°";
-  document.getElementById("weather-cond").textContent = d.condition_label || "";
+  var cur = currentWeather();
+  document.getElementById("weather-icon").textContent =
+      (cur && WEATHER_EMOJI[cur.condition]) || WEATHER_EMOJI[d.condition] || "🌡️";
+  document.getElementById("weather-temp").textContent =
+      (cur && cur.temperature != null) ? Math.round(cur.temperature) + "°" : "--°";
+  document.getElementById("weather-cond").textContent =
+      cur ? weatherCondLabel(cur.condition) : (d.condition_label || "");
   var parts = [];
   if (d.forecast_high != null) {
     parts.push(escHtml(tr("weather_high")) + " <span class=\"val\">" + Math.round(d.forecast_high) + "°</span>");
@@ -653,11 +766,13 @@ function showWeatherSlide() {
   document.getElementById("weather-range").innerHTML = parts.join("");
   renderHourly(d.hourly);
   document.getElementById("weather-date").textContent = new Date().toLocaleDateString();
+  document.getElementById("weather-age").textContent  = weatherAgeLabel(cur && cur.derived);
   document.getElementById("overlay-date").innerHTML     = "";
   document.getElementById("overlay-location").innerHTML = "";
   document.getElementById("photo-counter").innerHTML    = "";
   document.getElementById("waste-badge").className      = "";
   document.getElementById("weather-slide").className = "visible";
+  updateBadges();
 }
 
 /** HH:MM v lokálnej zóne tabletu. iso prichádza z HA v UTC – kontajner
@@ -676,9 +791,25 @@ function _hourLocalTime(h) {
   return h.time || "";
 }
 
+/** Zahoď hodiny, ktoré už boli. Predpoveď prišla s posledným pushom, takže po
+ * pár hodinách bez neho začínala v minulosti – a prvá karta, označená ako
+ * „teraz“, ukazovala dávno minulú hodinu. Hodina bez `iso` sa zahodiť nedá. */
+function _futureHours(hourly) {
+  var cutoff = Date.now() - 3600000, out = [], i, t;
+  if (!hourly || !hourly.length) { return []; }
+  for (i = 0; i < hourly.length; i++) {
+    if (!hourly[i]) { continue; }
+    if (!hourly[i].iso) { out.push(hourly[i]); continue; }
+    t = new Date(hourly[i].iso).getTime();
+    if (isNaN(t) || t >= cutoff) { out.push(hourly[i]); }
+  }
+  return out;
+}
+
 function renderHourly(hourly) {
   var host = document.getElementById("weather-hourly");
-  if (!hourly || !hourly.length) { host.innerHTML = ""; host.style.display = "none"; return; }
+  hourly = _futureHours(hourly);
+  if (!hourly.length) { host.innerHTML = ""; host.style.display = "none"; return; }
   host.style.display = "";
   // Portrét (na výšku): hodiny sú riadky zhora dole. Landscape (na stene):
   // 6 veľkých kariet vedľa seba. 6 položiek sa zmestí aj na telefón na výšku
@@ -711,6 +842,108 @@ function hideWeatherSlide() {
   document.getElementById("weather-slide").className = "";
 }
 
+// ── Počasie: štítok v rohu fotky ──────────────────────────────────────────────
+// Nezávislý na weather mode: ten je krátkodobý (spustí ho ráno pohyb a po
+// pár hodinách sa vypne), kým štítok má byť na fotkách celý deň.
+
+// Podmienky, pri ktorých má zmysel niečo hlásiť dopredu.
+var WEATHER_WET = {
+  "rainy": "rain", "pouring": "rain", "hail": "rain",
+  "snowy": "snow", "snowy-rainy": "snow",
+  "lightning": "storm", "lightning-rainy": "storm"
+};
+var WEATHER_ALERT_COLOR = {
+  "rain": "#4a90e2", "snow": "#b3e5fc", "storm": "#a855f7",
+  "frost": "#7fd4ff", "heat": "#ff8a3d", "severe": "#e0574f"
+};
+
+function _alert(kind, icon, text) {
+  return { kind: kind, icon: icon, text: text, color: WEATHER_ALERT_COLOR[kind] || "#9aa5b1" };
+}
+
+/** Je v najbližších hodinách niečo, čo stojí za upozornenie? null = nie je. */
+function weatherAlert() {
+  var cur = currentWeather();
+  if (!cur) { return null; }
+  if (cur.condition === "exceptional") {
+    return _alert("severe", WEATHER_EMOJI.exceptional, tr("weather_alert_severe"));
+  }
+  var pts = _hourlyPoints(weatherData && weatherData.hourly);
+  var now = Date.now(), i, p, ahead, kind;
+  var lo = null, hi = null;
+  for (i = 0; i < pts.length; i++) {
+    p = pts[i];
+    ahead = p.t - now;
+    if (ahead < 0) { continue; }
+    // Zrážky hlásime na 3 h dopredu – toľko stačí na rozhodnutie, či si vziať dáždnik.
+    if (ahead <= 3 * 3600000) {
+      kind = WEATHER_WET[p.cond];
+      if (kind) {
+        return _alert(kind, WEATHER_EMOJI[p.cond] || "🌧️",
+                      trf("weather_alert_" + kind, [_hourLocalTime(p.raw)]));
+      }
+    }
+    // Mráz a horúčava sa oplatí vedieť s väčším predstihom.
+    if (ahead <= 6 * 3600000) {
+      if (lo == null || p.temp < lo) { lo = p.temp; }
+      if (hi == null || p.temp > hi) { hi = p.temp; }
+    }
+  }
+  if (lo != null && lo <= 0)  { return _alert("frost", "❄️", tr("weather_alert_frost")); }
+  if (hi != null && hi >= 30) { return _alert("heat",  "🌡️", tr("weather_alert_heat")); }
+  return null;
+}
+
+function weatherDisplayHas(part) {
+  return WEATHER_DISPLAY === part || WEATHER_DISPLAY === "both";
+}
+
+/** Je teraz v okne, v ktorom sa štítok smie ukazovať? Prelomenie polnoci
+ * ("22-6") sa vyhodnocuje rovnako ako nočný režim. */
+function _withinBadgeHours(now) {
+  if (WEATHER_BADGE_FROM == null || WEATHER_BADGE_TO == null) { return true; }
+  var h = now.getHours(), s = WEATHER_BADGE_FROM, e = WEATHER_BADGE_TO;
+  return (s < e) ? (h >= s && h < e) : (h >= s || h < e);
+}
+
+/** Popis pod teplotou, keď nie je čo hlásiť: dnešné max/min. */
+function weatherRangeText() {
+  var d = weatherData, parts = [];
+  if (!d) { return ""; }
+  if (d.forecast_high != null) { parts.push(tr("weather_high") + " " + Math.round(d.forecast_high) + "°"); }
+  if (d.forecast_low  != null) { parts.push(tr("weather_low")  + " " + Math.round(d.forecast_low)  + "°"); }
+  return parts.length ? parts.join(" · ") : weatherCondLabel(d.condition);
+}
+
+function updateWeatherBadge() {
+  var el = document.getElementById("weather-badge");
+  if (!el) { return; }
+  var counter = document.getElementById("photo-counter");
+  var show = weatherDisplayHas("badge") && slideshowActive && !_sleeping &&
+             !wasteSlideVisible && !_weatherIsVisible() && _withinBadgeHours(new Date());
+  var cur  = show ? currentWeather() : null;
+  var alert = cur ? weatherAlert() : null;
+  if (!cur || (WEATHER_BADGE_ALERTS_ONLY && !alert)) {
+    el.className = "";
+    if (counter) { counter.style.visibility = ""; }
+    return;
+  }
+  document.getElementById("weather-badge-ico").textContent =
+      (alert && alert.icon) || WEATHER_EMOJI[cur.condition] || "🌡️";
+  document.getElementById("weather-badge-sub").textContent =
+      alert ? alert.text : weatherRangeText();
+  document.getElementById("weather-badge-temp").textContent = Math.round(cur.temperature) + "°";
+  el.style.borderRightColor = (alert && alert.color) || "#9aa5b1";
+  el.className = "visible";
+  // Počítadlo fotiek sedí v tom istom rohu – kým je štítok hore, ustúpi mu.
+  if (counter) { counter.style.visibility = "hidden"; }
+}
+
+function updateBadges() {
+  updateWasteBadge();
+  updateWeatherBadge();
+}
+
 // ── Kalendár vývozu odpadu: beh na fotorámiku ─────────────────────────────────
 var wasteCfg          = null;   // nastavenia zo /waste/status
 var wasteByDate       = {};     // "YYYY-MM-DD" -> [{id,label,icon,color}, ...]
@@ -737,7 +970,7 @@ function fetchWasteStatus() {
         wasteByDate[wasteUpcoming[i].date] = wasteUpcoming[i].types || [];
       }
     } catch (e) { return; }
-    updateWasteBadge();
+    updateBadges();
   });
 }
 setInterval(fetchWasteStatus, 15 * 60 * 1000);
@@ -828,11 +1061,13 @@ function showWasteSlide() {
   document.getElementById("waste-badge").className      = "";
   document.getElementById("waste-slide").className      = "visible";
   wasteSlideVisible = true;
+  updateBadges();
 }
 
 function hideWasteSlide() {
   document.getElementById("waste-slide").className = "";
   wasteSlideVisible = false;
+  updateBadges();
 }
 
 // ── Kalendár vývozu odpadu: editor ───────────────────────────────────────────
@@ -1029,7 +1264,7 @@ function wdSaveConfig() {
           }
         } catch (e2) {}
       }
-      updateWasteBadge();
+      updateBadges();
       wdRenderMain();
     });
   };

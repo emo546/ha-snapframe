@@ -43,6 +43,12 @@ def _env_str(key, default=""):
     v = os.environ.get(key, "")
     return default if v in ("null", "", None) else v
 
+def _env_bool(key, default=False):
+    v = os.environ.get(key, "")
+    if v in ("null", "", None):
+        return default
+    return str(v).strip().lower() in ("true", "1", "yes", "on")
+
 OUTPUT_FOLDER   = _env_str("OUTPUT_FOLDER",  "/sambamount/converted")
 SLIDESHOW_SECS  = _env_int("SLIDESHOW_SECONDS", 30)
 WEB_PORT        = _env_int("WEB_PORT",  8099)
@@ -56,6 +62,13 @@ SLEEP_START     = _env_str("SLEEP_START", "")         # "23:00" alebo ""
 SLEEP_END       = _env_str("SLEEP_END",   "")         # "07:00" alebo ""
 WEATHER_PHOTO_INTERVAL   = _env_int("WEATHER_PHOTO_INTERVAL", 8)      # fotiek medzi weather slidmi
 WEATHER_MODE_DURATION_MIN = _env_int("WEATHER_MODE_DURATION_MIN", 120)  # min trvania po /weather-mode/on
+WEATHER_DISPLAY_MODE     = _env_str("WEATHER_DISPLAY_MODE", "slide")  # slide | badge | both
+# Zámerne nie _env_str: ten berie prázdny reťazec ako "nenastavené" a vrátil by
+# default, lenže prázdna hodnota je tu platná odpoveď – "štítok smie celý deň".
+WEATHER_BADGE_HOURS      = os.environ.get("WEATHER_BADGE_HOURS", "6-22")
+if WEATHER_BADGE_HOURS == "null":     # bashio pre chýbajúcu option
+    WEATHER_BADGE_HOURS = "6-22"
+WEATHER_BADGE_ALERTS     = _env_bool("WEATHER_BADGE_ALERTS_ONLY", False)
 ANTHROPIC_API_KEY = _env_str("ANTHROPIC_API_KEY")   # nepovinné – záloha pre skeny/fotky harmonogramu
 API_TOKEN         = _env_str("API_TOKEN")           # nepovinný – chráni zápisové endpointy
 
@@ -201,6 +214,16 @@ TRANSLATIONS = {
         "weather_high":         "Max",
         "weather_low":          "Min",
         "weather_humidity":     "Vlhkos\u0165",
+        "weather_age_now":      "aktualizovan\u00e9 pr\u00e1ve teraz",
+        "weather_age_min":      "aktualizovan\u00e9 pred {0} min",
+        "weather_age_hour":     "aktualizovan\u00e9 pred {0} h",
+        "weather_age_forecast": "z hodinovej predpovede",
+        "weather_alert_rain":   "D\u00e1\u017e\u010f o {0}",
+        "weather_alert_snow":   "Sne\u017eenie o {0}",
+        "weather_alert_storm":  "B\u00farka o {0}",
+        "weather_alert_frost":  "Mr\u00e1z",
+        "weather_alert_heat":   "Hor\u00fa\u010dava",
+        "weather_alert_severe": "V\u00fdstraha",
         # — Kalendár vývozu odpadu —
         "waste_open_btn":       "Vývoz odpadu…",
         "waste_title":          "Vývoz odpadu",
@@ -322,6 +345,16 @@ TRANSLATIONS = {
         "weather_high":         "High",
         "weather_low":          "Low",
         "weather_humidity":     "Humidity",
+        "weather_age_now":      "updated just now",
+        "weather_age_min":      "updated {0} min ago",
+        "weather_age_hour":     "updated {0} h ago",
+        "weather_age_forecast": "from the hourly forecast",
+        "weather_alert_rain":   "Rain at {0}",
+        "weather_alert_snow":   "Snow at {0}",
+        "weather_alert_storm":  "Storm at {0}",
+        "weather_alert_frost":  "Frost",
+        "weather_alert_heat":   "Heat",
+        "weather_alert_severe": "Warning",
         # — Waste collection calendar —
         "waste_open_btn":       "Waste collection…",
         "waste_title":          "Waste collection",
@@ -443,6 +476,16 @@ TRANSLATIONS = {
         "weather_high":         "Hoch",
         "weather_low":          "Tief",
         "weather_humidity":     "Feuchtigkeit",
+        "weather_age_now":      "gerade aktualisiert",
+        "weather_age_min":      "vor {0} min aktualisiert",
+        "weather_age_hour":     "vor {0} h aktualisiert",
+        "weather_age_forecast": "aus der Stundenvorhersage",
+        "weather_alert_rain":   "Regen um {0}",
+        "weather_alert_snow":   "Schnee um {0}",
+        "weather_alert_storm":  "Gewitter um {0}",
+        "weather_alert_frost":  "Frost",
+        "weather_alert_heat":   "Hitze",
+        "weather_alert_severe": "Warnung",
         # — Abfallkalender —
         "waste_open_btn":       "Abfuhrkalender…",
         "waste_title":          "Abfuhrkalender",
@@ -1212,6 +1255,29 @@ def _parse_weather_payload(raw: dict) -> dict:
     }
     return data
 
+def _parse_badge_hours(raw):
+    """Z "6-22" spraví (6, 22). Prázdne/nezmyselné = (None, None) – bez obmedzenia.
+
+    Podporuje aj prelomenie polnoci ("22-6"), rovnako ako nočný režim; keď sa
+    obe hodiny rovnajú, okno nič neobmedzuje. Zle zadanú hodnotu radšej
+    ignorujeme, než by mal odznak zmiznúť na celý deň bez vysvetlenia.
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return (None, None)
+    parts = s.replace(" ", "").split("-")
+    if len(parts) != 2:
+        return (None, None)
+    try:
+        start, end = int(parts[0]), int(parts[1])
+    except ValueError:
+        return (None, None)
+    if not (0 <= start <= 23 and 0 <= end <= 23) or start == end:
+        return (None, None)
+    return (start, end)
+
+WEATHER_BADGE_FROM, WEATHER_BADGE_TO = _parse_badge_hours(WEATHER_BADGE_HOURS)
+
 @app.route("/weather-mode/on", methods=["POST"])
 def weather_mode_on_route():
     if not _has_state:
@@ -1245,6 +1311,11 @@ def weather_route():
     lang = LANGUAGE if LANGUAGE in TRANSLATIONS else "sk"
     status = _state.get_weather_status()
     status["interval"] = WEATHER_PHOTO_INTERVAL
+    # Vek dát počítame na serveri: prehliadač na starom tablete môže mať
+    # rozhodené hodiny, ale rozdiel dvoch časov z toho istého zdroja platí
+    # vždy. Rám si k nemu už len priráta, koľko času ubehlo od fetchu.
+    updated = status.get("updated_at")
+    status["age_seconds"] = max(0, int(time.time() - updated)) if updated else None
     if status.get("data"):
         cond = status["data"].get("condition", "")
         status["data"]["condition_label"] = WEATHER_CONDITIONS.get(lang, {}).get(cond, cond)
@@ -1387,6 +1458,14 @@ def index():
         "sleep_start":      SLEEP_START,
         "sleep_end":        SLEEP_END,
         "weather_interval": WEATHER_PHOTO_INTERVAL,
+        "weather_display":  WEATHER_DISPLAY_MODE,
+        "weather_badge_from":        WEATHER_BADGE_FROM,
+        "weather_badge_to":          WEATHER_BADGE_TO,
+        "weather_badge_alerts_only": WEATHER_BADGE_ALERTS,
+        # Celá mapa podmienok, nie len tá pushnutá: rám si teplotu aj podmienku
+        # dopočítava z hodinovej predpovede, takže potrebuje popísať aj inú
+        # podmienku, než akú Home Assistant naposledy poslal.
+        "weather_conditions": WEATHER_CONDITIONS.get(lang, {}),
         "weekdays":         WEEKDAYS[lang],
         "weekdays_short":   WEEKDAYS_SHORT[lang],
         "months":           MONTHS[lang],
@@ -1458,6 +1537,11 @@ def run_web_server():
         WEB_PORT, LANGUAGE, SLEEP_START or "off", SLEEP_END or "off"))
     log.info("Weather mode: interval {} fotiek, trvanie {} min po aktivácii".format(
         WEATHER_PHOTO_INTERVAL, WEATHER_MODE_DURATION_MIN))
+    log.info("Weather zobrazenie: {}, odznak {}{}".format(
+        WEATHER_DISPLAY_MODE,
+        "{}:00 – {}:00".format(WEATHER_BADGE_FROM, WEATHER_BADGE_TO)
+        if WEATHER_BADGE_FROM is not None else "celý deň",
+        ", len keď je čo hlásiť" if WEATHER_BADGE_ALERTS else ""))
     if BASIC_AUTH_USER:
         log.info("HTTP Basic Auth aktívna pre: {}".format(BASIC_AUTH_USER))
     from waitress import serve

@@ -22,6 +22,9 @@ SLEEP_START=$(bashio::config 'sleep_start')
 SLEEP_END=$(bashio::config 'sleep_end')
 WEATHER_PHOTO_INTERVAL=$(bashio::config 'weather_photo_interval')
 WEATHER_MODE_DURATION_MIN=$(bashio::config 'weather_mode_duration_minutes')
+WEATHER_DISPLAY_MODE=$(bashio::config 'weather_display_mode')
+WEATHER_BADGE_HOURS=$(bashio::config 'weather_badge_hours')
+WEATHER_BADGE_ALERTS_ONLY=$(bashio::config 'weather_badge_alerts_only')
 ANTHROPIC_API_KEY=$(bashio::config 'anthropic_api_key')
 API_TOKEN=$(bashio::config 'api_token')
 MQTT_ENABLED=$(bashio::config 'mqtt_enabled')
@@ -42,6 +45,9 @@ MQTT_PASSWORD=$(bashio::config 'mqtt_password')
 [ "${SLEEP_END}" = "null" ]           && SLEEP_END=""
 [ "${WEATHER_PHOTO_INTERVAL}" = "null" ]    && WEATHER_PHOTO_INTERVAL="8"
 [ "${WEATHER_MODE_DURATION_MIN}" = "null" ] && WEATHER_MODE_DURATION_MIN="120"
+[ "${WEATHER_DISPLAY_MODE}" = "null" ]      && WEATHER_DISPLAY_MODE="slide"
+[ "${WEATHER_BADGE_HOURS}" = "null" ]       && WEATHER_BADGE_HOURS="6-22"
+[ "${WEATHER_BADGE_ALERTS_ONLY}" = "null" ] && WEATHER_BADGE_ALERTS_ONLY="false"
 [ "${ANTHROPIC_API_KEY}" = "null" ]           && ANTHROPIC_API_KEY=""
 [ "${API_TOKEN}" = "null" ]                   && API_TOKEN=""
 [ "${MQTT_ENABLED}" = "null" ]                && MQTT_ENABLED="true"
@@ -154,6 +160,9 @@ export SLEEP_START
 export SLEEP_END
 export WEATHER_PHOTO_INTERVAL
 export WEATHER_MODE_DURATION_MIN
+export WEATHER_DISPLAY_MODE
+export WEATHER_BADGE_HOURS
+export WEATHER_BADGE_ALERTS_ONLY
 export ANTHROPIC_API_KEY
 export API_TOKEN
 export MQTT_HOST
