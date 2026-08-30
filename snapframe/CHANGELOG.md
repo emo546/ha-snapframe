@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.0] – 2026
+
+### Fixed
+
+- **The big temperature on the weather screen was the temperature at push time, not now.** `/weather-update` carries whatever `weather.home` read when Home Assistant sent it, and the frame displayed that value unchanged for as long as it stood — so a frame running since the morning kept showing the morning's temperature, with nothing on screen to suggest it was old. The frame now decides for itself: a push younger than 20 minutes is used as-is (it is a measurement), an older one has the current temperature and condition **interpolated from the hourly forecast that arrived with it**, so the number moves smoothly through the day instead of jumping on the hour. Once the current time runs past the end of that forecast — nothing pushed for roughly 12 hours — it shows `--°` rather than a number it can no longer stand behind. The freshness rule needs no new setting: it is bounded by the length of the forecast itself.
+- **`/weather` now reports `age_seconds`.** The age is computed on the server (a difference between two readings of one clock), and the frame adds the time elapsed since its own fetch, so a tablet with badly set clocks still gets the age right. The weather screen prints it underneath (`updated 12 min ago`, or `from the hourly forecast · updated 4 h ago`) — a stalled automation is now visible instead of silent.
+- **The hourly strip could start in the past.** The forecast arrives with the push, so hours before *now* were still drawn after a few hours without one — and the first card, highlighted as "now", showed an hour long gone. Past hours are dropped before the strip is laid out.
+
+### Added
+
+- **Weather badge in the top-right corner** (`weather_display_mode`: `slide` / `badge` / `both`). Weather mode is short-lived by design — motion starts it in the morning, it stops itself a couple of hours later — so there was no way to keep the weather on screen for the rest of the day short of leaving the full-screen slide cycling. The badge mirrors the waste-collection badge in the opposite corner (same layout, same old-iPad-Safari fallbacks) and shows icon, temperature and today's high/low over the photos. It is driven by the data that is already there, so it needs no new endpoint and no second automation; the photo counter steps aside while it is up. Default stays `slide`, so an existing frame looks exactly as it did until the option is changed.
+- **`weather_badge_hours`** (default `6-22`, may wrap past midnight, empty = all day) bounds when the badge may appear, independently of weather mode's own duration.
+- **`weather_badge_alerts_only`** turns the badge into a notification rather than a readout: it stays hidden until the hourly forecast shows rain, snow or a storm within 3 hours, or frost or heat within 6, and its accent colour matches what it is warning about.
+- The condition translations are now handed to the page in full, not just the label of the pushed condition — the frame derives conditions from the forecast too, and needs to name them.
+- 12 new tests: the badge-hour window (including wrap-past-midnight and nonsense input, which must not silently disable the badge for a whole day), `/weather` age reporting, the hourly payload surviving a push intact, and the page config carrying the new settings. 105 tests in total.
+
+### Changed
+
+- The recommended weather automation in the documentation now also triggers on a state change of the weather entity, not only every 30 minutes, so a fresh measurement reaches the frame as soon as one exists.
+
 ## [3.0.3] – 2026
 
 ### Added

@@ -65,6 +65,15 @@ configuration:
   weather_mode_duration_minutes:
     name: "Weather mode duration (minutes)"
     description: "How long weather mode stays on after a motion sensor triggers it."
+  weather_display_mode:
+    name: "How to show the weather"
+    description: "slide = full screen between photos (weather mode only); badge = small corner badge during the day; both = both."
+  weather_badge_hours:
+    name: "Corner badge hours"
+    description: "When the corner badge may appear, e.g. 6-22. Leave empty for all day."
+  weather_badge_alerts_only:
+    name: "Corner badge only when there is news"
+    description: "Show the badge only for rain, snow, storms, frost or heat in the next few hours, instead of showing the temperature all day."
   anthropic_api_key:
     name: "Claude API key (optional)"
     description: "Only used when the schedule import cannot read a leaflet locally. This is the one feature that sends data outside your network."
