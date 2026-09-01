@@ -112,7 +112,7 @@ jobs:
         if: matrix.arch != 'amd64'
         uses: docker/setup-qemu-action@v4
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Build image for ${{ matrix.arch }}
         uses: docker/build-push-action@v6
         with:
