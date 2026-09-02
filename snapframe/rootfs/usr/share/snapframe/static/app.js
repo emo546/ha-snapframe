@@ -667,11 +667,16 @@ function _hourlyPoints(hourly) {
   return pts;
 }
 
+// Nad týmto rozostupom už dva body nie sú susedné hodiny a interpolovať medzi
+// nimi nemá zmysel: denná predpoveď (`type: daily`) nesie denné MAXIMÁ, takže
+// interpolácia medzi nimi dá ráno letnú popoludňajšiu teplotu.
+var WEATHER_MAX_GAP_MS = 3 * 3600000;
+
 /** Teplota a podmienka pre `nowMs`, dopočítané z hodinovej predpovede.
- * Medzi dvoma hodinami sa teplota interpoluje lineárne, takže číslo na
- * obrazovke rastie plynulo namiesto skoku vždy o celej hodine.
- * Mimo rozsahu predpovede (viac než hodinu pred prvou alebo za poslednou)
- * vráti null – vtedy sa už nedá tvrdiť nič. */
+ * Medzi dvoma susednými hodinami sa teplota interpoluje lineárne, takže číslo
+ * na obrazovke rastie plynulo namiesto skoku vždy o celej hodine.
+ * Mimo rozsahu predpovede (viac než hodinu pred prvou alebo za poslednou),
+ * alebo keď sú body priďaleko od seba, vráti null. */
 function weatherFromHourly(hourly, nowMs) {
   var pts = _hourlyPoints(hourly), i, a, b, f;
   if (!pts.length) { return null; }
@@ -682,6 +687,7 @@ function weatherFromHourly(hourly, nowMs) {
   for (i = 0; i < pts.length - 1; i++) {
     a = pts[i]; b = pts[i + 1];
     if (nowMs >= a.t && nowMs <= b.t) {
+      if (b.t - a.t > WEATHER_MAX_GAP_MS) { return null; }
       f = (b.t === a.t) ? 0 : (nowMs - a.t) / (b.t - a.t);
       return {
         temperature: a.temp + (b.temp - a.temp) * f,
@@ -695,13 +701,39 @@ function weatherFromHourly(hourly, nowMs) {
 }
 
 var WEATHER_FRESH_SECS = 20 * 60;   // dokedy sa pushnutá hodnota berie ako aktuálna
+var WEATHER_MAX_ANCHOR = 5;         // °C – poistka proti nezmyselne veľkému posunu
+
+/** Je to naozaj hodinová predpoveď? Rozostup prvých dvoch bodov stačí –
+ * Home Assistant posiela body rovnomerne. */
+function _isHourly(pts) {
+  return pts.length >= 2 && (pts[1].t - pts[0].t) <= WEATHER_MAX_GAP_MS;
+}
+
+/** Rozdiel medzi meraním a predpoveďou v čase posledného pushu.
+ *
+ * Predpoveď a meranie sa systematicky líšia – u OpenWeatherMap beží hodinová
+ * predpoveď bežne o pár stupňov inak než jeho vlastná nameraná teplota. Keď
+ * sa z predpovede vzala absolútna hodnota, rám tú odchýlku ukazoval celý deň.
+ * Meranie z posledného pushu je jediné pevné číslo, ktoré máme, tak sa z
+ * predpovede berie len jej TVAR: o koľko sa odvtedy oteplilo alebo ochladilo.
+ * Vedľajší efekt je, že dopočítaná hodnota na meranie plynulo nadväzuje –
+ * pri prechode cez hranicu čerstvosti už teplota neposkočí. */
+function weatherAnchorOffset(d, age) {
+  if (d.temperature == null || age == null) { return 0; }
+  var atPush = weatherFromHourly(d.hourly, Date.now() - age * 1000);
+  if (!atPush) { return 0; }
+  var off = d.temperature - atPush.temperature;
+  if (off >  WEATHER_MAX_ANCHOR) { return  WEATHER_MAX_ANCHOR; }
+  if (off < -WEATHER_MAX_ANCHOR) { return -WEATHER_MAX_ANCHOR; }
+  return off;
+}
 
 /** Čo naozaj ukázať ako aktuálne počasie.
  *
  * `temperature` z /weather-update je aktuálna len v okamihu pushu; keď rám
  * beží celý deň a Home Assistant medzitým nič nepošle, ostane na obrazovke
  * ranná hodnota. Kým je push čerstvý, berieme ho (je to meranie), potom sa
- * teplota dopočítava z hodinovej predpovede, ktorá prišla s ním.
+ * teplota dopočítava z hodinovej predpovede ukotvenej na to meranie.
  * Vráti {temperature, condition, derived} alebo null, keď sa už nedá tvrdiť nič. */
 function currentWeather() {
   var d = weatherData;
@@ -710,13 +742,25 @@ function currentWeather() {
   if (d.temperature != null && (age == null || age <= WEATHER_FRESH_SECS)) {
     return { temperature: d.temperature, condition: d.condition || "", derived: false };
   }
-  var h = weatherFromHourly(d.hourly, Date.now());
+  var now = Date.now();
+  var h   = weatherFromHourly(d.hourly, now);
   if (h) {
-    return { temperature: h.temperature, condition: h.condition, derived: true };
+    return {
+      temperature: h.temperature + weatherAnchorOffset(d, age),
+      condition:   h.condition,
+      derived:     true
+    };
   }
-  // Bez hodinovej predpovede niet z čoho dopočítať – pushnutá hodnota je
-  // stále lepšia než nič a riadok s vekom pod ňou povie, aká je stará.
-  if (!_hourlyPoints(d.hourly).length && d.temperature != null) {
+  // Hodinová predpoveď existuje, ale „teraz“ je až za jej koncom – dáta sú
+  // preukázateľne neplatné a tvrdiť z nich teplotu by bolo klamstvo.
+  var pts = _hourlyPoints(d.hourly);
+  if (_isHourly(pts) && now > pts[pts.length - 1].t + 3600000) {
+    return null;
+  }
+  // Inak sa dopočítať nedá (žiadna predpoveď, alebo len hrubá/denná, ktorá
+  // nesie maximá a nie priebeh) – posledné meranie je stále to najlepšie, čo
+  // máme, a riadok s vekom pod ním povie, aké je staré.
+  if (d.temperature != null) {
     return { temperature: d.temperature, condition: d.condition || "", derived: false };
   }
   return null;
