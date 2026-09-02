@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.1] – 2026
+
+### Fixed
+
+- **The derived temperature carried the forecast's bias, so it read a couple of degrees off all day.** 3.1.0 falls back to the hourly forecast once the last push is older than 20 minutes — but it took the forecast's *absolute* value, and a forecast does not agree with the measurement it sits next to: OpenWeatherMap's hourly forecast routinely runs a degree or two away from the same integration's own current temperature. A frame whose automation pushes once in the morning therefore spent the whole day showing that offset. The forecast is now used only for its **shape**: the difference between the measurement and the forecast at the moment of the push is carried forward, so the curve passes through the last real measurement and tracks how much it has warmed or cooled since. The offset is clamped to ±5 °C so one odd reading cannot skew the display. A welcome side effect is that crossing the 20-minute freshness boundary no longer makes the number jump — the two sources now meet.
+- **A daily forecast was interpolated as if it were hourly.** `weather.get_forecasts` with `type: daily` — which the documentation offers for integrations without an hourly forecast — returns one entry per day carrying that day's *maximum*. 3.1.0 interpolated between those maxima, so a frame showed roughly the afternoon high all morning (~25 °C at 6 a.m. against a real 14 °C). Points more than 3 hours apart are no longer treated as neighbouring hours; with a coarse forecast the frame keeps showing the last measurement instead, with its age printed underneath as before.
+- The fallback to the last measurement no longer requires the forecast to be missing entirely — an unusable one (too coarse, or unparseable timestamps) now falls back the same way instead of showing `--°`. `--°` is still shown for the case it was meant for: a genuine hourly forecast whose last hour is already in the past.
+
 ## [3.1.0] – 2026
 
 ### Fixed
