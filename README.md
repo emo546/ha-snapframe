@@ -55,7 +55,7 @@ You can display your family photos, organize them into albums, show photo inform
 
 ## 🎥 See it in action
 
-![SnapFrame demo](docs/images/snapframe-demo.gif)
+![SnapFrame demo](https://raw.githubusercontent.com/emo546/ha-snapframe/main/IMG_1191.gif)
 
 SnapFrame can run fullscreen on an old iPad or Android tablet while Home Assistant handles the rest.
 
