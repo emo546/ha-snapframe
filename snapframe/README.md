@@ -469,8 +469,14 @@ The badge is driven by the same data as the weather screen, so it needs no extra
 `temperature` in `/weather-update` is only current at the moment Home Assistant pushes it. A frame that runs all day would otherwise keep showing the value from the morning push. So the frame decides for itself what to display:
 
 - **push younger than 20 minutes** → the pushed value is used as-is (it is a measurement)
-- **older than that** → the temperature is **interpolated from the hourly forecast** that arrived with it, so the number moves smoothly through the day instead of jumping on the hour
+- **older than that** → the temperature is **derived from the hourly forecast** that arrived with it, so the number moves smoothly through the day instead of jumping on the hour
 - **beyond the end of that forecast** (nothing pushed for ~12 h) → `--°`, and the badge hides rather than lying
+
+Only the *shape* of the forecast is used, never its absolute values. A forecast does not agree with the measurement beside it — OpenWeatherMap's hourly forecast commonly runs a degree or two away from the same integration's own current temperature — so the difference between the two at the moment of the push is carried forward. The displayed curve therefore passes through the last real measurement and tracks how much it has warmed or cooled since, instead of inheriting the forecast's bias.
+
+A forecast whose entries are more than 3 hours apart is not an hourly one — `type: daily` returns one entry per day carrying that day's *maximum* — so it is never interpolated. With a coarse forecast the frame keeps showing the last measurement, with its age underneath.
+
+> **The update automation has to keep running all day.** This is the single most common cause of a temperature that looks wrong: an automation triggered once in the morning (`trigger: time, at: "05:58:00"`) pushes one measurement and one 12-hour forecast, and everything after that is derived. The frame handles it, but a measurement always beats a derivation — use the `time_pattern` and `state` triggers below so a fresh one arrives every half hour. Note also that `forecast[:12]` covers only the next 12 hours, so a single morning push runs out by late afternoon and the frame falls back to `--°`.
 
 The weather screen prints the data's age underneath (`updated 12 min ago`, or `from the hourly forecast · updated 4 h ago`), so a stalled automation is visible instead of silent. The hourly strip likewise drops hours that have already passed, so the highlighted "now" card really is now.
 
