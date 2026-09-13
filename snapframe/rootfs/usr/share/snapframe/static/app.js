@@ -676,10 +676,11 @@ var WEATHER_MAX_GAP_MS = 3 * 3600000;
  * Medzi dvoma susednými hodinami sa teplota interpoluje lineárne, takže číslo
  * na obrazovke rastie plynulo namiesto skoku vždy o celej hodine.
  * Mimo rozsahu predpovede (viac než hodinu pred prvou alebo za poslednou),
- * alebo keď sú body priďaleko od seba, vráti null. */
+ * alebo keď to nie je hodinová predpoveď (denná a pod.), vráti null – aj na
+ * krajných bodoch, kde sa dva susedné body na porovnanie rozostupu nemajú. */
 function weatherFromHourly(hourly, nowMs) {
   var pts = _hourlyPoints(hourly), i, a, b, f;
-  if (!pts.length) { return null; }
+  if (!pts.length || !_isHourly(pts)) { return null; }
   if (nowMs < pts[0].t) {
     return (pts[0].t - nowMs <= 3600000)
       ? { temperature: pts[0].temp, condition: pts[0].cond } : null;
