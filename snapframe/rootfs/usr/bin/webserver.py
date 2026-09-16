@@ -29,6 +29,8 @@ from flask import Flask, send_from_directory, jsonify, Response, request
 from PIL import Image, ImageOps
 from PIL.ExifTags import TAGS
 
+import photofilter
+
 log = logging.getLogger("snapframe.web")
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -831,6 +833,8 @@ def _iter_photo_entries(root: Path, recursive: bool):
                 if recursive and entry.name not in HIDDEN_DIRS:
                     yield from _iter_photo_entries(Path(entry.path), True)
                 continue
+            if photofilter.is_apple_double(entry.name):
+                continue
             if entry.is_file() and Path(entry.name).suffix.lower() in ALLOWED_EXT:
                 yield entry
         except OSError:
@@ -953,7 +957,12 @@ def _forget_thumbs(rel):
 # (mazanie, zápis thumbnailu, čítanie EXIF), by inak siahli mimo knižnice fotiek.
 
 def safe_photo_path(filename: str):
-    """Absolútna cesta k súboru v knižnici fotiek, alebo None ak vedie mimo nej."""
+    """Absolútna cesta k súboru v knižnici fotiek, alebo None ak vedie mimo nej.
+
+    Súbory AppleDouble (._*) sa odmietnu rovnako ako cesty mimo knižnice –
+    priamy zásah na URL (/thumb, /photo, /exif, mazanie) tak nemôže stiahnuť
+    metadátový súbor macOS do spracovania či zobrazenia.
+    """
     if not filename:
         return None
     base = Path(OUTPUT_FOLDER).resolve()
@@ -962,6 +971,8 @@ def safe_photo_path(filename: str):
     except (OSError, ValueError, RuntimeError):
         return None
     if target != base and base not in target.parents:
+        return None
+    if photofilter.is_apple_double(target.name):
         return None
     return target
 
@@ -1492,6 +1503,7 @@ def pregenerate_thumbs():
     all_photos = [
         f for f in folder.rglob("*")
         if f.is_file() and f.suffix.lower() in ALLOWED_EXT
+        and not photofilter.is_apple_double(f.name)
         and not any(p in HIDDEN_DIRS for p in f.relative_to(folder).parts)
     ]
     total = len(all_photos)
