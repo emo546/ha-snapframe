@@ -472,5 +472,85 @@ class TestPage(WebTestCase):
                 self.assertIn("max-age", r.headers.get("Cache-Control", ""))
 
 
+class TestAppleDouble(WebTestCase):
+    """macOS necháva na SMB shari vedľa fotky pomocný súbor "._<meno>" s
+    metadátami (AppleDouble) – nie je to obrázok a nesmie sa spracúvať ako
+    fotka: nemá byť v zoznamoch, v počte fotiek, v indexe ani na vstupe
+    do generovania thumbnailov, a priamy zásah na URL ho tiež nesmie
+    vytiahnuť."""
+
+    def setUp(self):
+        super().setUp()
+        Image.new("RGB", (40, 30), (10, 120, 90)).save(self.lib / "IMG_0137.JPG")
+        (self.lib / "._IMG_0137.JPG").write_bytes(b"junk apple double bytes")
+        sub = self.lib / "Podpriečinok č.1"
+        sub.mkdir()
+        Image.new("RGB", (40, 30), (10, 120, 90)).save(sub / "IMG_0200.jpg")
+        (sub / "._IMG_0200.jpg").write_bytes(b"junk apple double bytes")
+
+    def test_apple_double_files_are_excluded_from_listing(self):
+        photos = self.client.get("/photos").get_json()["photos"]
+        self.assertFalse(any(p.startswith("._") or "/._" in p for p in photos))
+        self.assertIn("IMG_0137.JPG", photos)
+        self.assertIn("Podpriečinok č.1/IMG_0200.jpg", photos)
+
+    def test_apple_double_files_are_excluded_from_list_photos(self):
+        photos = webserver.list_photos("all")
+        self.assertFalse(any(p.startswith("._") or "/._" in p for p in photos))
+
+    def test_album_count_ignores_apple_double(self):
+        albums = self.client.get("/albums").get_json()["albums"]
+        by_name = {a["name"]: a["count"] for a in albums}
+        self.assertEqual(by_name.get("Podpriečinok č.1"), 1)
+
+    def test_pregenerate_thumbs_skips_apple_double(self):
+        real_open = webserver.Image.open
+        opened = []
+
+        def spy_open(path, *a, **kw):
+            opened.append(str(path))
+            return real_open(path, *a, **kw)
+
+        webserver.Image.open = spy_open
+        # Nasadíme do indexu vopred záznam pre ._ súbor, aby sme overili, že
+        # prune() ho po behu odstráni.
+        photoindex.put("._IMG_0137.JPG", (self.lib / "._IMG_0137.JPG").stat().st_mtime)
+        try:
+            with self.assertNoLogs(webserver.log, level="WARNING"):
+                webserver.pregenerate_thumbs()
+        finally:
+            webserver.Image.open = real_open
+
+        self.assertFalse(any("._IMG_0137.JPG" in p for p in opened),
+                          "AppleDouble súbor sa nemal nikdy otvoriť cez PIL")
+        self.assertTrue(any("IMG_0137.JPG" in p and "._" not in p for p in opened),
+                         "skutočná fotka mala dostať thumbnail")
+
+        known = photoindex.all_dates()
+        self.assertFalse(any(rel.startswith("._") or "/._" in rel for rel in known),
+                          "index nesmie po prune() obsahovať AppleDouble záznamy")
+
+    def test_direct_urls_reject_apple_double(self):
+        for route in ("/thumb/._IMG_0137.JPG", "/photo/._IMG_0137.JPG", "/exif/._IMG_0137.JPG"):
+            with self.subTest(route=route):
+                with self.assertNoLogs(webserver.log, level="WARNING"):
+                    r = self.client.get(route)
+                self.assertEqual(r.status_code, 404)
+
+    def test_delete_rejects_apple_double(self):
+        r = self.client.post("/delete/._IMG_0137.JPG")
+        self.assertEqual(r.status_code, 404)
+        self.assertTrue((self.lib / "._IMG_0137.JPG").exists(),
+                         "AppleDouble súbor sa nemal ani len pohnúť")
+
+    def test_genuinely_corrupt_photo_still_warns(self):
+        """Fix sa nesmie prejaviť ako všeobecné stlmenie varovaní – skutočne
+        poškodená fotka (bez "._" predpony) musí varovanie vyhodiť ako predtým."""
+        (self.lib / "broken.jpg").write_bytes(b"not actually a jpeg")
+        with self.assertLogs(webserver.log, level="WARNING") as cm:
+            self.client.get("/thumb/broken.jpg")
+        self.assertTrue(any("Thumbnail chyba" in m for m in cm.output))
+
+
 if __name__ == "__main__":
     unittest.main()

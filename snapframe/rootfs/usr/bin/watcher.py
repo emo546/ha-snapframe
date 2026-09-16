@@ -15,6 +15,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 import pillow_heif
 
+import photofilter
 import state
 
 pillow_heif.register_heif_opener()
@@ -86,6 +87,10 @@ def process_file(path: Path, watch_base: Path) -> bool:
     """Spracuje jeden HEIC súbor. Vráti True ak úspešne skonvertovaný."""
     if path.suffix.lower() not in (".heic", ".heif"):
         return False
+    if photofilter.is_apple_double(path.name):
+        # macOS AppleDouble metadáta ("._IMG.HEIC") – nie je to fotka, nechaj
+        # ich na mieste bez konverzie a bez mazania originálu.
+        return False
 
     log.info("Nájdený HEIC: {}".format(path.relative_to(watch_base)))
 
@@ -124,6 +129,7 @@ def scan_folder() -> int:
     all_heic = [
         f for f in folder.rglob("*")
         if f.is_file() and f.suffix.lower() in (".heic", ".heif")
+        and not photofilter.is_apple_double(f.name)
     ]
 
     if not all_heic:
