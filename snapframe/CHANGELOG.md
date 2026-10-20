@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.3] – 2026-10-20
+
+### Fixed
+
+- A delayed location/date response is retained for the photo still on screen when loading the next image fails. Late metadata is ignored after returning to the album picker.
+
 ## [3.1.2] – 2026-10-20
 
 ### Fixed
