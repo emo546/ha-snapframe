@@ -561,7 +561,7 @@ function showPhoto(index) {
       hideWeatherSlide();
       hideWasteSlide();
       document.getElementById("photo-counter").innerHTML = (idx + 1) + " / " + photos.length;
-      loadExifOverlay(filename, mine);
+      loadExifOverlay(filename);
       updateBadges();
       // Nasledujúca fotka sa ťahá počas toho, ako sa pozerá na túto.
       if (photos.length > 1) {
@@ -572,11 +572,12 @@ function showPhoto(index) {
 }
 var _showToken = 0;
 
-function loadExifOverlay(filename, token) {
+function loadExifOverlay(filename) {
   document.getElementById("overlay-date").innerHTML     = "";
   document.getElementById("overlay-location").innerHTML = "";
   xhrGet("/exif/" + encodePath(filename), function(err, text) {
-    if (err || token !== _showToken) { return; }
+    // Ďalšie načítanie môže zlyhať; metadáta stále patria zobrazenej fotke.
+    if (err || filename !== displayedPhoto) { return; }
     try {
       var data = JSON.parse(text);
       document.getElementById("overlay-date").innerHTML     = escHtml(data.date     || "");

@@ -101,6 +101,23 @@ test("a slow EXIF response cannot overwrite a newer photo's location", () => {
   assert.equal(f.el("overlay-location").innerHTML, "New location");
 });
 
+test("a late EXIF response still belongs to the visible photo when the next load fails", () => {
+  const f = frame();
+  f.context.showPhoto(1); f.images[0].onload(); f.tick(50);
+  const visibleExif = f.requests[0];
+  f.context.showPhoto(2); f.images[f.images.length - 1].onerror();
+  visibleExif.cb(null, '{"location":"Visible location"}');
+  assert.equal(f.el("overlay-location").innerHTML, "Visible location");
+});
+
+test("returning to albums ignores late metadata responses", () => {
+  const f = frame();
+  f.context.showPhoto(1); f.images[0].onload(); f.tick(50);
+  const exif = f.requests[0];
+  f.context.goBack(); exif.cb(null, '{"location":"Stale location"}');
+  assert.equal(f.el("overlay-location").innerHTML, "");
+});
+
 test("returning to albums cancels an outstanding photo transition", () => {
   const f = frame();
   f.context.showPhoto(1);
