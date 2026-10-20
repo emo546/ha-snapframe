@@ -20,6 +20,7 @@ import json as json_module
 import logging
 import random as random_module
 import time
+import tempfile
 import urllib.request
 from collections import OrderedDict
 from pathlib import Path
@@ -918,6 +919,7 @@ def _get_or_create_thumb(filename: str, size=None):
             return (str(thumb_path.parent), thumb_path.name)
     except OSError:
         pass
+    temp_path = None
     try:
         thumb_path.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(src) as raw:
@@ -925,12 +927,24 @@ def _get_or_create_thumb(filename: str, size=None):
             img.thumbnail((size, size), Image.LANCZOS)
             if img.mode != "RGB":
                 img = img.convert("RGB")
-            img.save(thumb_path, "JPEG", quality=THUMB_QUALITY, optimize=True)
+            # Súbežný request/pregenerácia nesmie čítať rozpracovaný JPEG.
+            # Premenovanie v tom istom priečinku zverejní až zatvorený súbor.
+            with tempfile.NamedTemporaryFile(dir=thumb_path.parent, prefix=".", suffix=".tmp",
+                                             delete=False) as tmp:
+                temp_path = Path(tmp.name)
+                img.save(tmp, "JPEG", quality=THUMB_QUALITY, optimize=True)
+            os.replace(temp_path, thumb_path)
     except Exception as e:
         log.warning("Thumbnail chyba {}: {}".format(filename, e))
-        if src.is_file():
-            return (str(src.parent), src.name)
+        # Originál môže byť mnohonásobne väčší než náhľad a starý iPad ho
+        # nemusí zvládnuť. Chybu nech spracuje slideshow, /photo ostáva dostupné.
         return None
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
     return (str(thumb_path.parent), thumb_path.name)
 
 

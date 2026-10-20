@@ -669,7 +669,9 @@ cost of reading and writing them over the network). They are generated:
 1. **On first request** (on-demand) if not yet cached
 2. **In bulk** after every scan in a background thread – this pre-warms the cache so the slideshow is fast even for large collections (3000+ photos)
 
-On the first ever run with an existing photo collection, pre-generation runs in the background. The slideshow is accessible immediately; photos without a cached thumbnail temporarily serve the full-size image as fallback.
+On the first ever run with an existing photo collection, pre-generation runs in the background. The slideshow is accessible immediately; missing thumbnails are generated on request. If generation fails or loading times out, the frame keeps its last loaded photo and tries the next one on the next slideshow tick. It never substitutes a large original for a failed preview, which could exhaust an old tablet's memory.
+
+Safari on iOS 9 and earlier uses fade transitions and previews no larger than 1024 px. Hidden photo layers release their images after the transition to reduce memory use on old iPads.
 
 The frame asks for the width it actually renders at, so a Retina panel gets a
 2048 px image instead of upscaling a 1024 px one. Only the widths in the fixed
@@ -763,6 +765,7 @@ EXIF metadata is read from the JPG files once and then served from the photo ind
 Development checks mirror CI: `python -m unittest discover -s tests`,
 `ruff check --config ruff.toml snapframe/rootfs/usr/bin tests`, and
 `node --check snapframe/rootfs/usr/share/snapframe/static/app.js`.
+Slideshow regression tests run with `node --test tests/test_slideshow.js`.
 The page lives in `snapframe/rootfs/usr/share/snapframe/` (`index.html`,
 `static/app.css`, `static/app.js`) — only the language pack and a few config
 values are injected by the server, everything else is a plain static file.

@@ -13,6 +13,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "snapframe" / "rootfs" / "usr" / "bin"))
 
@@ -317,6 +318,38 @@ class TestPhotoScanning(WebTestCase):
 
 
 class TestThumbnails(WebTestCase):
+    def test_thumbnail_is_published_only_after_the_jpeg_is_complete(self):
+        target = self.root / "thumbs" / "1024" / "a.jpg.jpg"
+        real_save = Image.Image.save
+
+        def observe_save(img, output, *args, **kwargs):
+            self.assertFalse(target.exists(), "incomplete JPEG was exposed to another request")
+            real_save(img, output, *args, **kwargs)
+            self.assertFalse(target.exists(), "JPEG must be closed before it is published")
+
+        with patch.object(Image.Image, "save", observe_save):
+            response = self.client.get("/thumb/a.jpg?w=1024")
+        self.assertEqual(response.status_code, 200)
+        with Image.open(target) as img:
+            img.load()
+        self.assertEqual(list(target.parent.iterdir()), [target])
+
+    def test_failed_thumbnail_write_does_not_leave_a_partial_cached_jpeg(self):
+        target = self.root / "thumbs" / "1024" / "a.jpg.jpg"
+
+        def failed_save(img, output, *args, **kwargs):
+            if hasattr(output, "write"):
+                output.write(b"partial JPEG")
+            else:
+                Path(output).write_bytes(b"partial JPEG")
+            raise OSError("disk full")
+
+        with patch.object(Image.Image, "save", failed_save), self.assertLogs(webserver.log, "WARNING"):
+            response = self.client.get("/thumb/a.jpg?w=1024")
+        self.assertEqual(response.status_code, 404)  # never send a huge original in place of a preview
+        self.assertFalse(target.exists())
+        self.assertEqual(list(target.parent.iterdir()), [])
+
     def test_thumbs_live_outside_the_photo_library(self):
         self.assertEqual(self.client.get("/thumb/a.jpg").status_code, 200)
         self.assertFalse((self.lib / "_thumbs").exists(),

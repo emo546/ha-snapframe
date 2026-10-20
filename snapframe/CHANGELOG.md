@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.2] – 2026-10-20
+
+### Fixed
+
+- A failed or timed-out photo load keeps the last loaded photo and its metadata instead of fading to an empty frame. Photo URLs are quoted so parentheses in album/file names cannot invalidate the CSS background. Rapid swipes and late EXIF responses no longer mix photo layers or locations; deletion targets the photo actually displayed.
+- Thumbnails are written to a temporary file and published atomically after closing, so concurrent slideshow requests and background generation cannot read a partial JPEG. Failed thumbnail generation no longer substitutes an unrestricted full-size original.
+- Safari on iOS 9 and earlier uses fade transitions and previews capped at 1024 px. Hidden photo layers release their images after fading out to reduce memory use on old iPads.
+
 ## [3.1.1] – 2026
 
 ### Fixed

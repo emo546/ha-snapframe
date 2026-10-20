@@ -14,6 +14,8 @@ var WEEKDAYS         = CFG.weekdays        || [];
 var WEEKDAYS_SHORT   = CFG.weekdays_short  || [];
 var MONTHS_LIST      = CFG.months          || [];
 var WEEK_ORDINALS    = CFG.week_ordinals   || [];
+var _iosVersion = /(?:iPad|iPhone|iPod).*OS (\d+)[_.]/.exec(navigator.userAgent || "");
+var LEGACY_IOS = !!(_iosVersion && parseInt(_iosVersion[1], 10) <= 9);
 
 // ── i18n helpers ──────────────────────────────────────────────────────────────
 function tr(k)       { return TR[k] || k; }
@@ -271,7 +273,7 @@ function displayWidth() {
   var dpr  = window.devicePixelRatio || 1;
   var side = Math.max(screen.width || 0, screen.height || 0,
                       window.innerWidth || 0, window.innerHeight || 0);
-  return Math.min(2048, Math.round(side * dpr)) || 1024;
+  return Math.min(LEGACY_IOS ? 1024 : 2048, Math.round(side * dpr)) || 1024;
 }
 
 // ── API token ─────────────────────────────────────────────────────────────────
@@ -427,7 +429,7 @@ function loadAlbumCovers() {
       var img = new Image();
       var coverUrl = api("/album-cover/" + encodeURIComponent(name));
       img.onload = function() {
-        btn.style.backgroundImage = "url('" + coverUrl + "')";
+        btn.style.backgroundImage = "url(" + JSON.stringify(coverUrl) + ")";
       };
       img.src = coverUrl;
     })(albumNames[i], i);
@@ -440,7 +442,7 @@ function goBack() {
   _showToken++;                      // zahoď rozrobené načítanie fotky
   if (advanceTimer) { clearInterval(advanceTimer); advanceTimer = null; }
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
-  photos = []; currentIndex = -1; activeIsA = true;
+  photos = []; currentIndex = -1; activeIsA = true; displayedPhoto = "";
   var a = document.getElementById("photoA");
   var b = document.getElementById("photoB");
   a.style.backgroundImage = ""; a.className = "photo";
@@ -462,6 +464,7 @@ function goBack() {
 
 // ── Slideshow ─────────────────────────────────────────────────────────────────
 var photos = [], currentIndex = -1, activeIsA = true;
+var displayedPhoto = "";
 var advanceTimer = null, refreshTimer = null, slideshowActive = false;
 var currentAlbum = "";
 var EFFECTS = ["fade", "zoomin", "zoomout", "slideleft", "slideup"];
@@ -495,7 +498,10 @@ function fetchPhotosAndStart() {
   });
 }
 
-function pickEffect() { return EFFECTS[Math.floor(Math.random() * EFFECTS.length)]; }
+function pickEffect() {
+  // Starému WebKitu šetríme pamäť bez zoomovania veľkých vrstiev.
+  return LEGACY_IOS ? "fade" : EFFECTS[Math.floor(Math.random() * EFFECTS.length)];
+}
 
 function photoUrl(filename) {
   return api("/thumb/" + encodePath(filename)) + "?w=" + displayWidth();
@@ -505,16 +511,20 @@ function photoUrl(filename) {
 function preloadPhoto(filename, cb) {
   var img = new Image();
   var done = false;
+  var url = photoUrl(filename);
+  var timer;
   function finish(ok) {
     if (done) { return; }
     done = true;
-    if (cb) { cb(ok); }
+    clearTimeout(timer);
+    img.onload = img.onerror = null;
+    if (cb) { cb(ok, url); }
   }
   img.onload  = function() { finish(true); };
   img.onerror = function() { finish(false); };
   // Poistka pre pomalý share: prechod nesmie čakať donekonečna.
-  setTimeout(function() { finish(false); }, 8000);
-  img.src = photoUrl(filename);
+  timer = setTimeout(function() { finish(false); }, 8000);
+  img.src = url;
   return img;
 }
 
@@ -522,8 +532,6 @@ var _nextPreload = null;
 
 function showPhoto(index) {
   if (!photos.length) { return; }
-  hideWeatherSlide();
-  hideWasteSlide();
   var idx      = ((index % photos.length) + photos.length) % photos.length;
   var filename = photos[idx];
   var nextEl   = activeIsA ? document.getElementById("photoB") : document.getElementById("photoA");
@@ -533,33 +541,42 @@ function showPhoto(index) {
 
   // Prechod sa spustí až keď je fotka stiahnutá – inak sa na pomalej sieti
   // odfadeuje prázdny rám a fotka doskočí až doprostred animácie.
-  preloadPhoto(filename, function() {
-    if (mine !== _showToken) { return; }     // medzitým sa prepli inde
-    nextEl.style.backgroundImage = "url(" + photoUrl(filename) + ")";
+  preloadPhoto(filename, function(ok, url) {
+    // Pri chybe/timeout-e nechaj poslednú dobrú fotku aj jej metadáta.
+    // Ďalší tick skúsi ďalšiu fotku; prázdny rám sa nikdy neodfadeuje.
+    if (!ok || mine !== _showToken) { return; }
+    // encodeURIComponent necháva zátvorky v názvoch – CSS url musí byť v úvodzovkách.
+    nextEl.style.backgroundImage = "url(" + JSON.stringify(url) + ")";
     nextEl.className = "photo " + effect + "-start";
     setTimeout(function() {
       if (mine !== _showToken) { return; }
       nextEl.className = "photo visible " + effect + "-end";
       prevEl.className = "photo";
+      activeIsA = !activeIsA;
+      displayedPhoto = filename;
+      // Po dobehnutí fade uvoľni obrázok zo skrytej vrstvy.
+      setTimeout(function() {
+        if (prevEl.className === "photo") { prevEl.style.backgroundImage = ""; }
+      }, 1800);
+      hideWeatherSlide();
+      hideWasteSlide();
+      document.getElementById("photo-counter").innerHTML = (idx + 1) + " / " + photos.length;
+      loadExifOverlay(filename, mine);
+      updateBadges();
+      // Nasledujúca fotka sa ťahá počas toho, ako sa pozerá na túto.
+      if (photos.length > 1) {
+        _nextPreload = preloadPhoto(photos[(idx + 1) % photos.length], null);
+      }
     }, 50);
-    activeIsA = !activeIsA;
-    // Nasledujúca fotka sa ťahá počas toho, ako sa pozerá na túto.
-    if (photos.length > 1) {
-      _nextPreload = preloadPhoto(photos[(idx + 1) % photos.length], null);
-    }
   });
-
-  document.getElementById("photo-counter").innerHTML = (idx + 1) + " / " + photos.length;
-  loadExifOverlay(filename);
-  updateBadges();
 }
 var _showToken = 0;
 
-function loadExifOverlay(filename) {
+function loadExifOverlay(filename, token) {
   document.getElementById("overlay-date").innerHTML     = "";
   document.getElementById("overlay-location").innerHTML = "";
   xhrGet("/exif/" + encodePath(filename), function(err, text) {
-    if (err) { return; }
+    if (err || token !== _showToken) { return; }
     try {
       var data = JSON.parse(text);
       document.getElementById("overlay-date").innerHTML     = escHtml(data.date     || "");
@@ -1732,13 +1749,15 @@ document.addEventListener("touchend", function(e) {
 }, false);
 
 // ── Mazanie ───────────────────────────────────────────────────────────────────
-function showDeleteDialog()  { document.getElementById("delete-dialog").style.display = "block"; }
+function showDeleteDialog() {
+  if (displayedPhoto) { document.getElementById("delete-dialog").style.display = "block"; }
+}
 function hideDeleteDialog()  { document.getElementById("delete-dialog").style.display = "none"; }
 
 function confirmDelete() {
   hideDeleteDialog();
-  if (!photos.length) { return; }
-  var filename = photos[currentIndex];
+  if (!photos.length || !displayedPhoto) { return; }
+  var filename = displayedPhoto;
   var xhr = new XMLHttpRequest();
   xhr.open("POST", api("/delete/" + encodePath(filename)), true);
   withToken(xhr);
@@ -1746,17 +1765,18 @@ function confirmDelete() {
     if (xhr.readyState !== 4) { return; }
     if (tokenRetry(xhr, confirmDelete)) { return; }
     if (xhr.status !== 200) { return; }
-    photos.splice(currentIndex, 1);
+    _showToken++;
+    var deletedIndex = photos.indexOf(filename);
+    if (deletedIndex >= 0) { photos.splice(deletedIndex, 1); }
+    displayedPhoto = "";
     if (!photos.length) {
       document.getElementById("photoA").className = "photo";
       document.getElementById("photoB").className = "photo";
       document.getElementById("photo-counter").innerHTML = "";
       document.getElementById("ss-msg").style.display = "block"; return;
     }
-    currentIndex = currentIndex % photos.length;
-    document.getElementById("photoA").className = "photo";
-    document.getElementById("photoB").className = "photo";
-    activeIsA = true; showPhoto(currentIndex);
+    currentIndex = (deletedIndex >= 0 ? deletedIndex : currentIndex) % photos.length;
+    showPhoto(currentIndex);
   };
   xhr.send();
 }

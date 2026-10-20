@@ -94,6 +94,8 @@ jobs:
           node-version: '20'
       - name: Syntax check app.js
         run: node --check snapframe/rootfs/usr/share/snapframe/static/app.js
+      - name: Slideshow regression tests
+        run: node --test tests/test_slideshow.js
 
   build:
     name: Build ${{ matrix.arch }}
